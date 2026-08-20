@@ -1,0 +1,58 @@
+RescueOS - Multi-Agent Architecture Folder Structure
+======================================================
+
+agent/
+├── __init__.py                          # Package marker
+├── config.py                            # Model setup, constants, KNOWN_LOCATIONS
+├── data_loader.py                       # FLOOD_POLYGONS, cache helpers, haversine
+├── main.py                              # Entry point (ranking + allocation demo)
+│
+├── tools/                               # Individual tool functions
+│   ├── __init__.py
+│   ├── flood_tool.py                    # get_flood_status()
+│   ├── accessibility_tool.py            # get_medical_accessibility()
+│   ├── exposure_tool.py                 # get_building_exposure()
+│   └── allocation_tool.py               # calculate_priority(), rank_locations(), allocate_resources()
+│
+└── agents/                              # Multi-agent reasoning components
+    ├── __init__.py
+    ├── flood_assessment_agent.py        # Flood + building exposure reasoning agent
+    ├── accessibility_agent.py           # Medical accessibility reasoning agent
+    ├── allocation_agent.py              # Priority computation reasoning agent
+    └── coordinator_agent.py             # Top-level orchestration agent
+
+---
+
+File Counts:
+  Total Python modules: 12 (.py files)
+  Init markers: 4 (__init__.py files)
+  Total: 16 files
+
+Cache generated on first run:
+  ./__pycache__/
+  ./tools/__pycache__/
+  ./agents/__pycache__/
+  (Contains .pyc bytecode files - safe to ignore/delete)
+
+---
+
+Design Organization:
+  
+  Layer 1 - Configuration & Data
+    config.py         → Model provider isolation (for Bedrock migration)
+    data_loader.py    → FLOOD_POLYGONS, cache infrastructure
+  
+  Layer 2 - Tools (Pure Functions)
+    tools/flood_tool.py           → Flood detection
+    tools/accessibility_tool.py   → Medical facility access
+    tools/exposure_tool.py        → Building exposure
+    tools/allocation_tool.py      → Priority scoring & resource allocation
+  
+  Layer 3 - Agents (Reasoning)
+    agents/flood_assessment_agent.py       → Reasons about flood risk
+    agents/accessibility_agent.py          → Reasons about access barriers
+    agents/allocation_agent.py             → Computes priority score
+    agents/coordinator_agent.py            → Orchestrates all sub-agents
+  
+  Layer 4 - Entry Point
+    main.py           → Demos ranking/allocation + coordinator reasoning
