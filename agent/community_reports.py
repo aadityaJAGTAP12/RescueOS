@@ -13,8 +13,7 @@ import os
 import uuid
 from datetime import datetime
 from agent.config import CACHE_DIR
-from agent.data_loader import FLOOD_POLYGONS
-from shapely.geometry import Point
+from agent.tools.flood_tool import get_flood_status
 
 
 REPORTS_FILE = os.path.join(os.path.dirname(CACHE_DIR), "community_reports.json")
@@ -42,17 +41,6 @@ def _save_reports(reports: list[dict]) -> None:
     os.makedirs(os.path.dirname(REPORTS_FILE), exist_ok=True)
     with open(REPORTS_FILE, "w") as f:
         json.dump(reports, f, indent=2)
-
-
-def _is_near_flood_zone(lat: float, lon: float, threshold_deg: float = 0.05) -> bool:
-    """
-    Check if a location roughly falls within or near a known flood-affected area.
-    Uses a generous threshold (~5km) to accept reports from the general area.
-    """
-    point = Point(lon, lat)
-    return any(
-        poly.distance(point) < threshold_deg for poly in FLOOD_POLYGONS
-    )
 
 
 def submit_report(
@@ -87,8 +75,9 @@ def submit_report(
     Returns:
         {"success": bool, "report_id": str, "message": str}
     """
-    # Validate location is near a flood zone
-    if not _is_near_flood_zone(lat, lon):
+    # Validate location is near a flood zone using the canonical flood_tool
+    flood_status = get_flood_status(lat=lat, lon=lon)
+    if not flood_status.get("near_flood_zone") and not flood_status.get("exactly_contained"):
         return {
             "success": False,
             "report_id": None,

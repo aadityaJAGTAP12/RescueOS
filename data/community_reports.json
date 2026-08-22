@@ -1,1 +1,21 @@
-[]
+[
+  {
+    "id": "020a2bef",
+    "timestamp": "2026-08-22T14:26:53.009896Z",
+    "lat": 26.949129,
+    "lon": 94.644442,
+    "people_count": 142,
+    "adults": 120,
+    "children": 13,
+    "elderly": 23,
+    "needs": [
+      "water",
+      "infant_care",
+      "shelter"
+    ],
+    "note": "get the help asap",
+    "contact": "123456789",
+    "source": "community_report",
+    "verified": false
+  }
+]
