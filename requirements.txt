@@ -1,0 +1,7 @@
+# ReliefOS Phase 1 — runtime dependencies
+# Derived from actual imports in agent/ (no speculative deps)
+
+strands-agents>=1.0
+shapely>=2.0
+requests>=2.28
+pytest>=7.0

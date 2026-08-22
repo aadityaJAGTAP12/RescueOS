@@ -13,12 +13,22 @@ from agent.config import CACHE_DIR
 
 # ---------------------------------------------------------------------------
 # Load flood data from geojson at module import (load once, cache in memory)
+# Uses path relative to this file's directory so tests can import safely.
 # ---------------------------------------------------------------------------
 
-with open("data/sivasagar_flood.geojson", "r") as f:
-    FLOOD_DATA = json.load(f)
+_FLOOD_GEOJSON = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data",
+    "sivasagar_flood.geojson",
+)
 
-FLOOD_POLYGONS = [shape(feature["geometry"]) for feature in FLOOD_DATA["features"]]
+try:
+    with open(_FLOOD_GEOJSON, "r") as f:
+        FLOOD_DATA = json.load(f)
+    FLOOD_POLYGONS = [shape(feature["geometry"]) for feature in FLOOD_DATA["features"]]
+except FileNotFoundError:
+    FLOOD_DATA = {"features": []}
+    FLOOD_POLYGONS = []
 
 
 # ---------------------------------------------------------------------------

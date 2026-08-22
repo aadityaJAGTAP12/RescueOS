@@ -1,0 +1,283 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-08-20T08:25:19Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+    {
+      "type": "node",
+      "id": 6913293207,
+      "lat": 26.9977983,
+      "lon": 94.6198744,
+      "tags": {
+        "addr:district": "Sivasagar",
+        "addr:full": "Jenganikatia, N H By Pass, Jenganikatia",
+        "addr:postcode": "785640",
+        "addr:state": "Assam",
+        "amenity": "hospital",
+        "contact:phone": "3772222070",
+        "name": "Pragati Hospital And Research Centre",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6913293208,
+      "lat": 26.993347,
+      "lon": 94.6428274,
+      "tags": {
+        "addr:district": "Sivasagar",
+        "addr:full": "A T Road, Ward No 13, Kanaknagar",
+        "addr:postcode": "785640",
+        "addr:state": "Assam",
+        "amenity": "hospital",
+        "contact:phone": "3772222233",
+        "name": "Sampreeti Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 6913293283,
+      "lat": 26.9857955,
+      "lon": 94.6507171,
+      "tags": {
+        "addr:district": "Sivasagar",
+        "addr:full": "B G Road",
+        "addr:postcode": "785640",
+        "addr:state": "Assam",
+        "amenity": "hospital",
+        "contact:phone": "3772221066",
+        "name": "East Point Hospital And Research Centre",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745455,
+      "lat": 26.9030744,
+      "lon": 94.5398452,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Noga Ali, Near Radhakanta Phukan High School, Gajpuria",
+        "addr:postcode": "785661",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Amguri",
+        "amenity": "clinic",
+        "description": "Primary Health Centre",
+        "healthcare": "centre",
+        "name": "Mini PHC, Charing",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745467,
+      "lat": 27.0903275,
+      "lon": 94.8081909,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Borbham Road, Kathalbari",
+        "addr:postcode": "785674",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Dimow",
+        "amenity": "hospital",
+        "name": "Mohokutie Tea Estate Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745471,
+      "lat": 26.986092,
+      "lon": 94.633868,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "A.T Road, Joysagar, Sivasagar",
+        "addr:postcode": "785640",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Sibsagar",
+        "amenity": "hospital",
+        "contact:phone": "9435801979",
+        "description": "District Hospital",
+        "name": "Sibsagar Civil Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745478,
+      "lat": 26.867707,
+      "lon": 94.791612,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Bihubar Road, Near Santak Hight School, Santak",
+        "addr:postcode": "785686",
+        "addr:state": "Assam",
+        "amenity": "clinic",
+        "description": "Primary Health Centre",
+        "healthcare": "centre",
+        "name": "Mini PHC, Santak",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745503,
+      "lat": 27.127612,
+      "lon": 94.739596,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Khara Haat-Demow Road, Sivasagar, Near Demow Higher Secondary School",
+        "addr:postcode": "785662",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Dimow",
+        "amenity": "hospital",
+        "description": "Community Health Centre",
+        "healthcare": "centre",
+        "name": "CHC, Demow",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745504,
+      "lat": 26.8833117,
+      "lon": 94.7187187,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Nazira Ali, Hatsoi Grant-I, Beside Police Batalian",
+        "addr:postcode": "785685",
+        "addr:state": "Assam",
+        "amenity": "clinic",
+        "health_facility:type": "dispensary",
+        "healthcare": "centre",
+        "name": "State DispensaryCH, Ligiripukhri Nazira",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745507,
+      "lat": 27.0258483,
+      "lon": 94.8284735,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Sagar-Berra Road, Near Post Office, Patsaku",
+        "addr:postcode": "785673",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Dimow",
+        "amenity": "hospital",
+        "name": "Patsaku Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7532350922,
+      "lat": 26.9866718,
+      "lon": 94.632303,
+      "tags": {
+        "addr:district": "Sivasagar",
+        "addr:full": "Dolmukh Chariali, Sivasagar",
+        "addr:postcode": "785640",
+        "addr:state": "Assam",
+        "amenity": "clinic",
+        "name": "Dr.A.Ahad's Clinic",
+        "source": "Local Knowledge"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7532350958,
+      "lat": 26.9930039,
+      "lon": 94.6425231,
+      "tags": {
+        "addr:district": "Sivasagar",
+        "addr:full": "West Milan Nagar, Sivasagar",
+        "addr:postcode": "785640",
+        "addr:state": "Assam",
+        "amenity": "clinic",
+        "name": "SankaRoadev Multispeciality Physiotherapy Clinic",
+        "source": "Local Knowledge"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7532350982,
+      "lat": 26.9931493,
+      "lon": 94.6432002,
+      "tags": {
+        "addr:district": "Sivasagar",
+        "addr:full": "A.T Road, Shop No.4, Ward No.13",
+        "addr:postcode": "785640",
+        "addr:state": "Assam",
+        "amenity": "clinic",
+        "name": "Apollo Diagnostics",
+        "source": "Local Knowledge"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7532350997,
+      "lat": 26.986672,
+      "lon": 94.632641,
+      "tags": {
+        "addr:district": "Sivasagar",
+        "addr:full": "Dolmukh Chariali, Sivasaga",
+        "addr:postcode": "785640",
+        "addr:state": "Assam",
+        "amenity": "clinic",
+        "name": "Blink Eye Clinic",
+        "source": "Local Knowledge"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7532351007,
+      "lat": 26.993236,
+      "lon": 94.642705,
+      "tags": {
+        "addr:district": "Sivasagar",
+        "addr:full": "Milon Nagar, Sivasagar",
+        "addr:postcode": "785640",
+        "addr:state": "Assam",
+        "amenity": "hospital",
+        "name": "Erc Eye Care Hub Hospital",
+        "source": "Local Knowledge"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7532351019,
+      "lat": 26.9804987,
+      "lon": 94.6378242,
+      "tags": {
+        "addr:district": "Sivasagar",
+        "addr:full": "Sivasagar",
+        "addr:postcode": "785640",
+        "addr:state": "Assam",
+        "amenity": "hospital",
+        "name": "Netra Jyoti Eye Hospital",
+        "source": "Local Knowledge"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7532351021,
+      "lat": 26.9847789,
+      "lon": 94.6379868,
+      "tags": {
+        "addr:district": "Sivasagar",
+        "addr:full": "Sky Chef, Opposite Hotel, Sivasagar",
+        "addr:postcode": "785640",
+        "addr:state": "Assam",
+        "amenity": "clinic",
+        "name": "Maxcare ENT Clinic",
+        "source": "Local Knowledge"
+      }
+    }
+  ]
+}
