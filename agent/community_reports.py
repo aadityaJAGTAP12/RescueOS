@@ -150,6 +150,9 @@ def get_reports_near(lat: float, lon: float, radius_km: float = 3.0) -> list[dic
     nearby = []
 
     for report in reports:
+        # Skip reports without coordinates (field intelligence with unresolved locations)
+        if report.get("lat") is None or report.get("lon") is None:
+            continue
         dist = haversine_km(lon, lat, report["lon"], report["lat"])
         if dist <= radius_km:
             report_copy = dict(report)
@@ -164,6 +167,66 @@ def get_reports_near(lat: float, lon: float, radius_km: float = 3.0) -> list[dic
 def get_all_reports() -> list[dict]:
     """Returns all stored reports (for debugging/admin)."""
     return _load_reports()
+
+
+def submit_field_intelligence(
+    extraction: dict,
+    lat: float = None,
+    lon: float = None,
+) -> dict:
+    """
+    Store a field intelligence extraction as a report.
+
+    This reuses the same storage as community reports but with
+    source: "field_intelligence_text" and optional lat/lon
+    (field intelligence may not have resolved coordinates).
+
+    Args:
+        extraction: the full extraction dict from extract_field_report()
+        lat: optional latitude (if location was resolved)
+        lon: optional longitude (if location was resolved)
+
+    Returns:
+        {"success": bool, "report_id": str, "message": str}
+    """
+    report_id = str(uuid.uuid4())[:8]
+    report = {
+        "id": report_id,
+        "timestamp": extraction.get("extracted_at", datetime.utcnow().isoformat() + "Z"),
+        "lat": lat,
+        "lon": lon,
+        "people_count": extraction.get("people_count") or 0,
+        "adults": 0,
+        "children": 0,
+        "elderly": 0,
+        "needs": extraction.get("needs", []),
+        "note": extraction.get("raw_text", ""),
+        "contact": None,
+        "source": "field_intelligence_text",
+        "verified": False,
+        # Field intelligence specific fields
+        "location_description": extraction.get("location_description"),
+        "location_resolved": extraction.get("location_resolved", False),
+        "road_status_mentions": extraction.get("road_status_mentions", []),
+        "facility_status_mentions": extraction.get("facility_status_mentions", []),
+        "extraction_confidence": extraction.get("extraction_confidence", "low"),
+        "raw_text": extraction.get("raw_text", ""),
+    }
+
+    reports = _load_reports()
+    reports.append(report)
+    _save_reports(reports)
+
+    location_desc = extraction.get("location_description") or "unresolved location"
+    return {
+        "success": True,
+        "report_id": report_id,
+        "message": (
+            f"Field intelligence accepted: extracted from text ({extraction.get('extraction_confidence', 'low')} confidence). "
+            f"Location: {location_desc}. "
+            f"NOTE: This is AI-extracted data from unverified field text."
+        ),
+    }
 
 
 def clear_reports() -> None:

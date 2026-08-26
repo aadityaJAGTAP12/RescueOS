@@ -1,0 +1,24 @@
+[
+  {
+    "id": "bc8d6a9a",
+    "target_type": "facility",
+    "target_id": "East Point Hospital And Research Centre",
+    "system_status": "operational",
+    "override_status": "damaged",
+    "reason": "Roof collapse from flooding",
+    "actor": "coordinator",
+    "timestamp": "2026-08-25T09:02:53.853236+00:00",
+    "active": true
+  },
+  {
+    "id": "20e94a33",
+    "target_type": "facility",
+    "target_id": "East Point Hospital And Research Centre",
+    "system_status": "operational",
+    "override_status": "damaged",
+    "reason": "Roof collapse from flooding",
+    "actor": "coordinator",
+    "timestamp": "2026-08-25T09:04:36.390313+00:00",
+    "active": true
+  }
+]

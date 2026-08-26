@@ -8,6 +8,7 @@ This module contains:
 1. calculate_priority() - the v2 recalibrated scoring formula
 2. rank_locations() - ranking logic for multiple locations
 3. allocate_resources() - greedy resource allocation
+4. recommend_destination() - route-aware destination recommendation
 """
 
 import re
@@ -15,6 +16,7 @@ from strands import tool
 from agent.tools.flood_tool import get_flood_status
 from agent.tools.exposure_tool import get_building_exposure
 from agent.tools.accessibility_tool import get_medical_accessibility
+from agent.tools.routing_tool import get_route, check_osrm_health
 
 
 @tool
@@ -230,3 +232,99 @@ def allocate_resources(ranked_locations: list[dict], resources: dict) -> str:
     output_lines.append("=" * 70)
     
     return "\n".join(output_lines)
+
+
+def recommend_destination(
+    origin_lat: float,
+    origin_lon: float,
+    ranked_locations: list[dict],
+    max_results: int = 3
+) -> dict:
+    """
+    Recommend destination(s) for resource deployment using real routing.
+    
+    Uses OSRM for real road distances when available, with explicit
+    fallback to haversine when routing is unavailable.
+    
+    Args:
+        origin_lat: Latitude of deployment base/origin
+        origin_lon: Longitude of deployment base/origin
+        ranked_locations: Output from rank_locations() - list of location dicts
+        max_results: Maximum number of destinations to recommend
+    
+    Returns:
+        {
+            "routing_available": bool,
+            "recommendations": [
+                {
+                    "location": str,
+                    "pdc_score": float,
+                    "category": str,
+                    "distance_km": float,
+                    "duration_minutes": float,
+                    "distance_method": str,
+                    "route_geometry": [[lon, lat], ...],
+                    "recommendation": str
+                },
+                ...
+            ],
+            "message": str
+        }
+    """
+    # Check routing availability upfront
+    routing_available = check_osrm_health()
+    
+    recommendations = []
+    
+    for loc_data in ranked_locations[:max_results]:
+        loc = loc_data["location"]
+        
+        # Skip locations with no flood impact
+        if loc_data["category"].strip().upper() in ("NONE", "SAFE"):
+            continue
+        
+        # Get location coordinates from flood status
+        flood_status = loc_data.get("flood_status", {})
+        lat = flood_status.get("lat")
+        lon = flood_status.get("lon")
+        
+        if lat is None or lon is None:
+            # Skip if we don't have coordinates
+            continue
+        
+        # Get route using OSRM (or haversine fallback)
+        route = get_route(
+            start_lat=origin_lat,
+            start_lon=origin_lon,
+            end_lat=lat,
+            end_lon=lon
+        )
+        
+        # Build recommendation
+        rec = {
+            "location": loc,
+            "pdc_score": loc_data["pdc_score"],
+            "category": loc_data["category"],
+            "distance_km": route["distance_km"],
+            "duration_minutes": route["duration_minutes"],
+            "distance_method": route["distance_method"],
+            "route_geometry": route["geometry"],
+            "recommendation": loc_data["priority"]["recommendation"]
+        }
+        recommendations.append(rec)
+    
+    # Sort by priority score (highest first), then by distance (shortest first)
+    recommendations.sort(
+        key=lambda r: (-r["pdc_score"], r["distance_km"])
+    )
+    
+    if routing_available:
+        msg = f"Found {len(recommendations)} prioritized destinations with real road routing"
+    else:
+        msg = f"Found {len(recommendations)} prioritized destinations (routing unavailable — using straight-line distances)"
+    
+    return {
+        "routing_available": routing_available,
+        "recommendations": recommendations,
+        "message": msg
+    }
