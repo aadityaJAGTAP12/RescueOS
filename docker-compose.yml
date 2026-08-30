@@ -1,0 +1,29 @@
+# ReliefOS Phase 5A — PostgreSQL + PostGIS
+# Local development database
+#
+# Usage:
+#   docker compose up -d
+#   export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5432/reliefos
+#   python -m agent.data.schema   # creates tables
+#   python -m agent.data.migration  # imports data
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: reliefos-postgis
+    environment:
+      POSTGRES_DB: reliefos
+      POSTGRES_USER: reliefos
+      POSTGRES_PASSWORD: reliefos
+    ports:
+      - "5432:5432"
+    volumes:
+      - reliefos_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reliefos -d reliefos"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  reliefos_pgdata:

@@ -15,30 +15,53 @@ from strands import tool
 from shapely.geometry import Point
 from shapely.strtree import STRtree
 from agent.config import KNOWN_LOCATIONS, OVERPASS_URL, OVERPASS_HEADERS
-from agent.data_loader import FLOOD_POLYGONS, _load_from_cache, _save_to_cache
+from agent.data_loader import FLOOD_POLYGONS, _load_from_cache, _save_to_cache, get_flood_polygons, get_known_locations
 from agent.tools.flood_tool import _resolve_location, _cache_key_for_coords
 
 
 # ---------------------------------------------------------------------------
 # Spatial index — built once at module load, reused for every request
+# Falls back to repository polygons when available (via get_flood_polygons)
 # ---------------------------------------------------------------------------
 
 _FLOOD_TREE = STRtree(FLOOD_POLYGONS) if FLOOD_POLYGONS else None
 
 
-def _point_in_any_flood_polygon(point: Point) -> bool:
+def _get_flood_tree(district_id: str = None):
+    """Get the STRtree for flood polygons, using repository data when available."""
+    if district_id is not None:
+        try:
+            from agent.data.repository import get_repository
+            repo = get_repository()
+            snapshot = repo.get_latest_flood_snapshot(district_id)
+            if snapshot and snapshot.geometry_geojson:
+                from shapely.geometry import shape as shapely_shape
+                features = snapshot.geometry_geojson.get("features", [])
+                polygons = [shapely_shape(f["geometry"]) for f in features if "geometry" in f]
+                if polygons:
+                    return STRtree(polygons), polygons
+        except Exception:
+            pass
+    return _FLOOD_TREE, FLOOD_POLYGONS
+
+
+def _point_in_any_flood_polygon(point: Point, district_id: str = None) -> bool:
     """Check if a point is contained by any flood polygon using the STRtree index.
+
+    Phase 4: Uses repository-backed flood polygons when available.
+    Falls back to legacy FLOOD_POLYGONS.
 
     Returns True if the point is inside at least one flood polygon.
     Uses spatial indexing for O(log n) average-case performance vs O(n) brute-force.
     """
-    if _FLOOD_TREE is None:
+    tree, polygons = _get_flood_tree(district_id)
+    if tree is None or not polygons:
         return False
     # STRtree.query returns indices of geometries whose bounding boxes
     # intersect the query geometry. We then verify actual containment.
-    candidates = _FLOOD_TREE.query(point)
+    candidates = tree.query(point)
     for idx in candidates:
-        if FLOOD_POLYGONS[idx].contains(point):
+        if polygons[idx].contains(point):
             return True
     return False
 
@@ -81,7 +104,7 @@ def get_building_exposure(location: str = None, lat: float = None, lon: float = 
     """
     print(f"  [Tool: get_building_exposure] location='{location}' lat={lat} lon={lon}")
 
-    # Resolve location from name or coordinates
+    # Resolve location from name or coordinates (Phase 4: district-aware)
     point_lon, point_lat, location_label = _resolve_location(location, lat, lon)
     if point_lon is None:
         # location_label is the error dict
@@ -94,6 +117,18 @@ def get_building_exposure(location: str = None, lat: float = None, lon: float = 
             "data_available": False,
             "error": location_label.get("error", "No location provided.")
         }
+
+    # Phase 4: Try to determine district_id from repository
+    district_id = None
+    if location:
+        try:
+            from agent.data.repository import get_repository
+            repo = get_repository()
+            settlement = repo.resolve_location(name=location)
+            if settlement:
+                district_id = settlement.district_id
+        except Exception:
+            pass
 
     # Determine cache key: use name if known, coordinate string otherwise
     cache_key = location.strip().lower() if location else _cache_key_for_coords(point_lat, point_lon)
@@ -180,7 +215,7 @@ def get_building_exposure(location: str = None, lat: float = None, lon: float = 
             centroid_lon = sum(c[0] for c in node_coords) / len(node_coords)
             centroid_lat = sum(c[1] for c in node_coords) / len(node_coords)
             b_point = Point(centroid_lon, centroid_lat)
-            if _point_in_any_flood_polygon(b_point):
+            if _point_in_any_flood_polygon(b_point, district_id=district_id):
                 exposed_count += 1
 
     exposure_ratio = exposed_count / total_buildings if total_buildings else 0.0

@@ -1,0 +1,82 @@
+09:26:10 [osm_pbf] INFO: ======================================================================
+09:26:10 [osm_pbf] INFO: RELIEFOS PHASE 5B.1 — RESUMABLE OSM PBF INGESTION
+09:26:10 [osm_pbf] INFO: ======================================================================
+09:26:10 [osm_pbf] INFO: Started at: 2026-08-30T03:56:10.608000+00:00
+09:26:10 [osm_pbf] INFO: PBF file: D:\RescueOS\RescueOS\data\raw\osm\north-eastern-zone-latest.osm.pbf
+09:26:10 [osm_pbf] INFO: Target districts: charaideo
+09:26:10 [osm_pbf] INFO: Categories to process: buildings
+09:26:10 [osm_pbf] INFO: 
+09:26:10 [osm_pbf] INFO: PBF file size: 104.1 MB
+09:26:10 [osm_pbf] INFO: 
+======================================================================
+09:26:10 [osm_pbf] INFO: STEP 0: VERIFY EXISTING DATABASE STATE (READ-ONLY)
+09:26:10 [osm_pbf] INFO: ======================================================================
+09:26:10 [osm_pbf] INFO: Database Row Counts (4 districts):
+09:26:10 [osm_pbf] INFO:   Districts:             4
+09:26:10 [osm_pbf] INFO:   Settlements:           18
+09:26:10 [osm_pbf] INFO:   Buildings:             214415
+09:26:10 [osm_pbf] INFO:   Roads:                 17398
+09:26:10 [osm_pbf] INFO:   Medical facilities:    277
+09:26:10 [osm_pbf] INFO:   Flood snapshots:       1
+09:26:10 [osm_pbf] INFO:   Bridges (is_bridge):   474
+09:26:10 [osm_pbf] INFO:   Real buildings:        214415
+09:26:10 [osm_pbf] INFO:   Real roads:            17398
+09:26:10 [osm_pbf] INFO:   Real medical:          277
+09:26:10 [osm_pbf] INFO: 
+09:26:10 [osm_pbf] INFO: | District    | Buildings | Roads  | Bridges | Medical |
+09:26:10 [osm_pbf] INFO: |-------------|----------:|-------:|--------:|--------:|
+09:26:10 [osm_pbf] INFO: | charaideo   |     25000 |   2769 |      62 |      41 |
+09:26:10 [osm_pbf] INFO: | golaghat    |    113482 |   7426 |     209 |      84 |
+09:26:10 [osm_pbf] INFO: | jorhat      |     10720 |   5144 |     141 |     117 |
+09:26:10 [osm_pbf] INFO: | sivasagar   |     65213 |   2059 |      62 |      35 |
+09:26:10 [osm_pbf] INFO: 
+======================================================================
+09:26:10 [osm_pbf] INFO: STEP 1: LOAD DISTRICT POLYGONS
+09:26:10 [osm_pbf] INFO: ======================================================================
+09:26:10 [osm_pbf] INFO: Loading district polygons from PostGIS...
+09:26:10 [osm_pbf] INFO:   [sivasagar] \u2713 Boundary loaded (Polygon)
+09:26:10 [osm_pbf] INFO:   [jorhat] \u2713 Boundary loaded (Polygon)
+09:26:10 [osm_pbf] INFO:   [charaideo] \u2713 Boundary loaded (Polygon)
+09:26:10 [osm_pbf] INFO:   [golaghat] \u2713 Boundary loaded (Polygon)
+09:26:10 [osm_pbf] INFO: 
+======================================================================
+09:26:10 [osm_pbf] INFO: STEP: INGEST BUILDINGS
+09:26:10 [osm_pbf] INFO: ======================================================================
+09:26:10 [osm_pbf] INFO: ============================================================
+09:26:10 [osm_pbf] INFO: INGESTING BUILDINGS FROM OSM PBF
+09:26:10 [osm_pbf] INFO: ============================================================
+09:26:10 [osm_pbf] INFO:   Single-district mode: using bbox [94.7345924, 26.9129627, 95.3717351, 27.226612] for charaideo
+09:26:10 [osm_pbf] INFO: Loading PBF for category: buildings
+09:26:10 [osm_pbf] INFO:   Using bounding box constraint: [94.7345924, 26.9129627, 95.3717351, 27.226612]
+09:26:11 [osm_pbf] INFO:   Extracting buildings...
+09:26:59 [osm_pbf] INFO:   buildings: 61235 features (48.7s)
+09:27:01 [osm_pbf] INFO: 
+============================================================
+09:27:01 [osm_pbf] INFO: SAFETY CHECK: Pre-import report
+09:27:01 [osm_pbf] INFO: ============================================================
+09:27:01 [osm_pbf] INFO:   [charaideo] Existing: 25000, PBF candidates: 43564, Expected new: 18564
+09:27:01 [osm_pbf] INFO: 
+Safety check passed — proceeding with insertion.
+09:27:01 [osm_pbf] INFO: 
+[CHARAIDEO] Buildings in district: 43564
+Exception during reset or similar
+Traceback (most recent call last):
+  File "D:\RescueOS\RescueOS\agent\data\postgres_repository.py", line 579, in upsert_buildings
+    execute_batch(cur, sql, rows, page_size=500)
+  File "C:\Users\Aditya\AppData\Roaming\Python\Python311\site-packages\psycopg2\extras.py", line 1216, in execute_batch
+    cur.execute(b";".join(sqls))
+psycopg2.OperationalError: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Aditya\AppData\Roaming\Python\Python311\site-packages\sqlalchemy\pool\base.py", line 986, in _finalize_fairy
+    fairy._reset(
+  File "C:\Users\Aditya\AppData\Roaming\Python\Python311\site-packages\sqlalchemy\pool\base.py", line 1441, in _reset
+    pool._dialect.do_rollback(self)
+  File "C:\Users\Aditya\AppData\Roaming\Python\Python311\site-packages\sqlalchemy\engine\default.py", line 712, in do_rollback
+    dbapi_connection.rollback()
+psycopg2.InterfaceError: connection already closed

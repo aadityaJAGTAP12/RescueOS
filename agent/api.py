@@ -32,7 +32,7 @@ from agent.tools.query_parser_tool import (
 from agent.tools.allocation_tool import rank_locations, allocate_resources, recommend_destination
 from agent.tools.routing_tool import get_route, check_osrm_health
 from agent.overrides import apply_override, get_operational_status, get_active_override, get_all_overrides
-from agent.data_loader import FLOOD_DATA
+from agent.data_loader import FLOOD_DATA, get_flood_data, get_all_known_locations
 
 
 # ---------------------------------------------------------------------------
@@ -127,9 +127,14 @@ def api_locations():
     """
     Return the list of known reference locations for the frontend
     to populate a dropdown or map markers.
+
+    Phase 4: Uses repository-backed locations when available.
+    Falls back to legacy KNOWN_LOCATIONS.
     """
     locations = []
-    for name, (lon, lat) in KNOWN_LOCATIONS.items():
+    # Phase 4: Use repository-backed locations
+    all_locs = get_all_known_locations()
+    for name, (lon, lat) in all_locs.items():
         locations.append({
             "id": name,
             "label": name.replace("_", " ").title(),
@@ -653,8 +658,16 @@ def api_recommend_destination():
 
 @app.route("/api/flood-geojson", methods=["GET"])
 def api_flood_geojson():
-    """Return the raw flood polygon GeoJSON for map rendering."""
-    return jsonify(FLOOD_DATA)
+    """
+    Return the raw flood polygon GeoJSON for map rendering.
+
+    Phase 4: Uses repository-backed flood data when available.
+    Falls back to legacy FLOOD_DATA.
+    """
+    # Phase 4: Try to get from repository
+    district_id = request.args.get("district")
+    flood_data = get_flood_data(district_id)
+    return jsonify(flood_data)
 
 
 # ---------------------------------------------------------------------------

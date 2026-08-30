@@ -7,3 +7,17 @@ requests>=2.28
 pytest>=7.0
 flask>=3.0
 flask-cors>=4.0
+
+# Phase 5A — PostgreSQL + PostGIS production data layer
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+geoalchemy2>=0.14
+alembic>=1.12
+
+# Phase 5B.1 — OSM PBF ingestion
+pyrosm>=0.13
+geopandas>=1.0
+pyproj>=3.0
+
+# Phase 5C.1 — Google Earth Engine flood mapping pipeline
+earthengine-api>=0.1.370

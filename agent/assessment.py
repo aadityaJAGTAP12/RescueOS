@@ -40,6 +40,7 @@ from agent.tools.exposure_tool import get_building_exposure
 from agent.tools.accessibility_tool import get_medical_accessibility
 from agent.tools.allocation_tool import calculate_priority
 from agent.config import KNOWN_LOCATIONS
+from agent.data_loader import get_known_locations, get_all_known_locations
 from agent.agents.coordinator_agent import coordinator_synthesize
 
 
@@ -167,6 +168,9 @@ def _resolve_coordinates(location=None, lat=None, lon=None):
     """
     Resolve lat/lon from either a known location name or explicit coordinates.
 
+    Phase 4: Uses repository-backed location resolution when available.
+    Falls back to legacy KNOWN_LOCATIONS.
+
     Returns:
         (lat, lon) on success, (None, None) if location name not found.
     """
@@ -174,6 +178,12 @@ def _resolve_coordinates(location=None, lat=None, lon=None):
         return lat, lon
     if location is not None:
         key = location.strip().lower()
+        # Phase 4: Try repository-backed resolution first
+        all_locs = get_all_known_locations()
+        if key in all_locs:
+            lon_val, lat_val = all_locs[key]
+            return lat_val, lon_val
+        # Fallback to legacy KNOWN_LOCATIONS
         if key in KNOWN_LOCATIONS:
             lon_val, lat_val = KNOWN_LOCATIONS[key]
             return lat_val, lon_val

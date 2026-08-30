@@ -7,6 +7,10 @@ __pycache__/
 .vscode/
 .idea/
 
+# Large external data (not committed to GitHub)
+data/raw/osm/north-eastern-zone-latest.osm.pbf
+cloudflared.exe.exe
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

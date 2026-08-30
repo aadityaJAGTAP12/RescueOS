@@ -10,7 +10,7 @@ import requests
 from strands import tool
 from shapely.geometry import Point, LineString
 from agent.config import KNOWN_LOCATIONS, OVERPASS_URL, OVERPASS_HEADERS
-from agent.data_loader import FLOOD_POLYGONS, _load_from_cache, _save_to_cache
+from agent.data_loader import FLOOD_POLYGONS, _load_from_cache, _save_to_cache, get_flood_polygons, get_known_locations
 from agent.tools.flood_tool import _resolve_location, _cache_key_for_coords
 
 
@@ -61,6 +61,18 @@ def get_road_status(
             "data_available": False,
             "error": location_label.get("error", "No location provided.")
         }
+
+    # Phase 4: Try to resolve district_id and use repository roads
+    district_id = None
+    if location:
+        try:
+            from agent.data.repository import get_repository
+            repo = get_repository()
+            settlement = repo.resolve_location(name=location)
+            if settlement:
+                district_id = settlement.district_id
+        except Exception:
+            pass
 
     # Determine cache key
     cache_key = location.strip().lower() if location else _cache_key_for_coords(point_lat, point_lon)
@@ -139,13 +151,16 @@ def get_road_status(
         if len(node_coords) < 2:
             continue
 
+        # Phase 4: Get flood polygons from repository or legacy fallback
+        flood_polys = get_flood_polygons(district_id)
+
         # Check if any segment of the road is near a flood polygon
         road_is_flooded = False
         for i in range(len(node_coords) - 1):
             seg_start = Point(node_coords[i])
             seg_end = Point(node_coords[i + 1])
 
-            for poly in FLOOD_POLYGONS:
+            for poly in flood_polys:
                 # Check if either endpoint is near the polygon
                 if (poly.distance(seg_start) < FLOOD_PROXIMITY_DEG or
                     poly.distance(seg_end) < FLOOD_PROXIMITY_DEG):

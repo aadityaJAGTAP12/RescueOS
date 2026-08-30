@@ -3,6 +3,10 @@ Data loading module: FLOOD_POLYGONS initialization and helper functions.
 
 FLOOD_POLYGONS is loaded once at module import time and cached in memory.
 Caching helpers (cache-first pattern) avoid repeated Overpass API calls.
+
+Phase 4: Repository-aware data access functions added.
+Tools should call get_flood_polygons() / get_known_locations() instead
+of importing FLOOD_POLYGONS / KNOWN_LOCATIONS directly.
 """
 
 import json
@@ -29,6 +33,101 @@ try:
 except FileNotFoundError:
     FLOOD_DATA = {"features": []}
     FLOOD_POLYGONS = []
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Repository-aware data access
+# Tools should call these instead of importing module-level variables.
+# Falls back to legacy file-based data when no repository data exists.
+# ---------------------------------------------------------------------------
+
+# Module-level cache for repository polygons (keyed by district_id)
+_repo_polygon_cache: dict[str, list] = {}
+_repo_data_cache: dict[str, dict] = {}
+
+
+def get_flood_polygons(district_id: str = None, observed_at: str = None) -> list:
+    """
+    Get flood polygons for a district, with fallback to legacy file data.
+
+    Priority:
+    1. Repository flood snapshot for district/date
+    2. Legacy FLOOD_POLYGONS from file
+
+    Args:
+        district_id: district to query (None = use legacy fallback)
+        observed_at: optional ISO date string to filter snapshots
+
+    Returns: list of Shapely polygons
+    """
+    if district_id is not None:
+        try:
+            from agent.data.repository import get_repository
+            repo = get_repository()
+            snapshot = repo.get_latest_flood_snapshot(district_id, observed_at=observed_at)
+            if snapshot and snapshot.geometry_geojson:
+                features = snapshot.geometry_geojson.get("features", [])
+                return [shape(f["geometry"]) for f in features if "geometry" in f]
+        except Exception:
+            pass
+    # Fallback to legacy file data
+    return FLOOD_POLYGONS
+
+
+def get_flood_data(district_id: str = None, observed_at: str = None) -> dict:
+    """
+    Get flood GeoJSON data for a district, with fallback to legacy.
+
+    Returns: GeoJSON FeatureCollection dict
+    """
+    if district_id is not None:
+        try:
+            from agent.data.repository import get_repository
+            repo = get_repository()
+            snapshot = repo.get_latest_flood_snapshot(district_id, observed_at=observed_at)
+            if snapshot and snapshot.geometry_geojson:
+                return snapshot.geometry_geojson
+        except Exception:
+            pass
+    return FLOOD_DATA
+
+
+def get_known_locations(district_id: str = None) -> dict:
+    """
+    Get known locations for a district, with fallback to legacy KNOWN_LOCATIONS.
+
+    Returns: dict of {name: (lon, lat)}
+    """
+    if district_id is not None:
+        try:
+            from agent.data.repository import get_repository
+            repo = get_repository()
+            settlements = repo.list_settlements(district_id=district_id)
+            if settlements:
+                return {s.id: (s.lon, s.lat) for s in settlements}
+        except Exception:
+            pass
+    # Fallback to legacy KNOWN_LOCATIONS
+    from agent.config import KNOWN_LOCATIONS
+    return KNOWN_LOCATIONS
+
+
+def get_all_known_locations() -> dict:
+    """
+    Get ALL known locations across all districts.
+
+    Returns: dict of {name: (lon, lat)}
+    """
+    try:
+        from agent.data.repository import get_repository
+        repo = get_repository()
+        settlements = repo.list_settlements()
+        if settlements:
+            return {s.id: (s.lon, s.lat) for s in settlements}
+    except Exception:
+        pass
+    from agent.config import KNOWN_LOCATIONS
+    return KNOWN_LOCATIONS
 
 
 # ---------------------------------------------------------------------------

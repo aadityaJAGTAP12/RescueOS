@@ -21,7 +21,7 @@ import requests
 from typing import Optional
 from shapely.geometry import LineString
 from shapely.strtree import STRtree
-from agent.data_loader import haversine_km, FLOOD_POLYGONS
+from agent.data_loader import haversine_km, FLOOD_POLYGONS, get_flood_polygons
 
 
 # OSRM configuration
@@ -30,21 +30,26 @@ OSRM_TIMEOUT_SECONDS = 10  # Reasonable timeout for routing requests
 
 # ---------------------------------------------------------------------------
 # Spatial index for flood-crossing detection (built once at module load)
+# Phase 4: Falls back to repository polygons via get_flood_polygons()
 # ---------------------------------------------------------------------------
 
 _FLOOD_TREE = STRtree(FLOOD_POLYGONS) if FLOOD_POLYGONS else None
 
 
-def check_route_flood_intersection(route_geometry: list) -> dict:
+def check_route_flood_intersection(route_geometry: list, district_id: str = None) -> dict:
     """
     Given a route's geometry (list of [lon, lat] coordinate pairs from OSRM),
     checks whether the route passes through or near any flood polygon.
+
+    Phase 4: Uses repository-backed flood polygons when available.
+    Falls back to legacy FLOOD_POLYGONS.
 
     Uses STRtree spatial indexing (same approach as exposure_tool.py) for
     O(log n) candidate selection, then verifies actual intersection.
 
     Args:
         route_geometry: List of [lon, lat] coordinate pairs.
+        district_id: optional district for repository-backed flood data
 
     Returns:
         {
@@ -55,7 +60,11 @@ def check_route_flood_intersection(route_geometry: list) -> dict:
             "warning": str or None
         }
     """
-    if _FLOOD_TREE is None or not route_geometry or len(route_geometry) < 2:
+    # Phase 4: Get polygons from repository or legacy fallback
+    flood_polys = get_flood_polygons(district_id)
+    flood_tree = STRtree(flood_polys) if flood_polys else None
+
+    if flood_tree is None or not route_geometry or len(route_geometry) < 2:
         return {
             "crosses_flood_zone": False,
             "intersecting_polygons": [],
@@ -73,11 +82,11 @@ def check_route_flood_intersection(route_geometry: list) -> dict:
         }
 
     # Use STRtree for fast candidate selection
-    candidates = _FLOOD_TREE.query(route_line)
+    candidates = flood_tree.query(route_line)
 
     intersecting = []
     for idx in candidates:
-        polygon = FLOOD_POLYGONS[idx]
+        polygon = flood_polys[idx]
         if route_line.intersects(polygon):
             # Calculate polygon area in km² (approximate)
             area_deg2 = polygon.area

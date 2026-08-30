@@ -9,7 +9,7 @@ Accepts either a known location name or explicit lat/lon coordinates.
 import requests
 from strands import tool
 from agent.config import KNOWN_LOCATIONS, OVERPASS_URL, OVERPASS_HEADERS
-from agent.data_loader import haversine_km, _load_from_cache, _save_to_cache
+from agent.data_loader import haversine_km, _load_from_cache, _save_to_cache, get_known_locations
 from agent.tools.flood_tool import _resolve_location, _cache_key_for_coords
 
 
@@ -50,6 +50,29 @@ def get_medical_accessibility(location: str = None, lat: float = None, lon: floa
             "data_available": False,
             "error": location_label.get("error", "No location provided.")
         }
+
+    # Phase 4: Try to resolve district_id and use repository facilities
+    district_id = None
+    if location:
+        try:
+            from agent.data.repository import get_repository
+            repo = get_repository()
+            settlement = repo.resolve_location(name=location)
+            if settlement:
+                district_id = settlement.district_id
+                facilities = repo.get_medical_facilities(district_id, lat=point_lat, lon=point_lon)
+                if facilities:
+                    nearest = min(facilities, key=lambda f: haversine_km(point_lon, point_lat, f.lon, f.lat))
+                    medical_distance_km = haversine_km(point_lon, point_lat, nearest.lon, nearest.lat)
+                    return {
+                        "location": location_label,
+                        "medical_distance_km": medical_distance_km,
+                        "medical_facility_name": nearest.name,
+                        "detail": f"Accessibility: {nearest.name} at {medical_distance_km:.1f}km",
+                        "data_available": True
+                    }
+        except Exception:
+            pass
 
     # Determine cache key: use name if known, coordinate string otherwise
     cache_key = location.strip().lower() if location else _cache_key_for_coords(point_lat, point_lon)
