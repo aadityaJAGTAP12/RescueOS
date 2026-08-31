@@ -70,9 +70,18 @@ def main():
     print(f"\nSummary:")
     print(f"  Districts: {len(summary.get('districts', []))}")
     print(f"  Settlements: {len(summary.get('settlements', []))}")
-    if summary.get('flood_snapshot'):
-        print(f"  Flood snapshot: {summary['flood_snapshot'].get('id', 'N/A')} "
-              f"({summary['flood_snapshot'].get('polygon_count', 0)} polygons)")
+    flood_snapshots = summary.get('flood_snapshots', {})
+    if flood_snapshots:
+        print(f"  Flood snapshots:")
+        for district_id, snap_info in flood_snapshots.items():
+            print(f"    {district_id}: {snap_info.get('id', 'N/A')} "
+                  f"({snap_info.get('polygon_count', 0)} polygons, "
+                  f"observed {snap_info.get('observed_at', 'N/A')})")
+    else:
+        # Backward compat: check for old single-snapshot format
+        if summary.get('flood_snapshot'):
+            print(f"  Flood snapshot: {summary['flood_snapshot'].get('id', 'N/A')} "
+                  f"({summary['flood_snapshot'].get('polygon_count', 0)} polygons)")
     print(f"  Community reports imported: {summary.get('community_reports_imported', 0)}")
     print(f"  Overrides imported: {summary.get('overrides_imported', 0)}")
     print(f"\nDatabase: {database_url.split('@')[-1] if '@' in database_url else database_url}")

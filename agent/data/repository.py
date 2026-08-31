@@ -29,6 +29,12 @@ from agent.data.models import (
     Provenance,
     VerificationState,
     make_flood_snapshot_id,
+    Organization,
+    Need,
+    ResourceOffer,
+    Operation,
+    ActivityEvent,
+    Notification,
 )
 
 
@@ -154,6 +160,90 @@ class DataRepository:
         """
         raise NotImplementedError
 
+    # --- Organizations (Phase 7B) ---
+
+    def create_organization(self, org: Organization) -> Organization:
+        raise NotImplementedError
+
+    def get_organization(self, org_id: str) -> Optional[Organization]:
+        raise NotImplementedError
+
+    def list_organizations(self, active_only: bool = True) -> list[Organization]:
+        raise NotImplementedError
+
+    def update_organization(self, org: Organization) -> None:
+        raise NotImplementedError
+
+    # --- Needs (Phase 7B) ---
+
+    def create_need(self, need: Need) -> Need:
+        raise NotImplementedError
+
+    def get_need(self, need_id: str) -> Optional[Need]:
+        raise NotImplementedError
+
+    def list_needs(self, district_id: str = None, status: str = None, urgency: str = None) -> list[Need]:
+        raise NotImplementedError
+
+    def update_need(self, need: Need) -> None:
+        raise NotImplementedError
+
+    def update_need_status(self, need_id: str, status: str) -> Optional[Need]:
+        raise NotImplementedError
+
+    # --- Resource Offers (Phase 7B) ---
+
+    def create_resource_offer(self, offer: ResourceOffer) -> ResourceOffer:
+        raise NotImplementedError
+
+    def get_resource_offer(self, offer_id: str) -> Optional[ResourceOffer]:
+        raise NotImplementedError
+
+    def list_resource_offers(self, organization_id: str = None, district_id: str = None, status: str = None, resource_type: str = None) -> list[ResourceOffer]:
+        raise NotImplementedError
+
+    def update_resource_offer(self, offer: ResourceOffer) -> None:
+        raise NotImplementedError
+
+    # --- Operations (Phase 7B) ---
+
+    def create_operation(self, operation: Operation) -> Operation:
+        raise NotImplementedError
+
+    def get_operation(self, operation_id: str) -> Optional[Operation]:
+        raise NotImplementedError
+
+    def list_operations(self, district_id: str = None, status: str = None, lead_organization_id: str = None) -> list[Operation]:
+        raise NotImplementedError
+
+    def update_operation(self, operation: Operation) -> None:
+        raise NotImplementedError
+
+    def add_operation_participant(self, operation_id: str, organization_id: str, role: str = "support") -> None:
+        raise NotImplementedError
+
+    def list_operation_participants(self, operation_id: str) -> list[dict]:
+        raise NotImplementedError
+
+    # --- Activity Events (Phase 7B) ---
+
+    def append_activity_event(self, event: ActivityEvent) -> None:
+        raise NotImplementedError
+
+    def list_activity_events(self, entity_type: str = None, entity_id: str = None, limit: int = 50) -> list[ActivityEvent]:
+        raise NotImplementedError
+
+    # --- Notifications (Phase 7B) ---
+
+    def create_notification(self, notification: Notification) -> Notification:
+        raise NotImplementedError
+
+    def list_notifications(self, recipient_id: str, unread_only: bool = False, limit: int = 50) -> list[Notification]:
+        raise NotImplementedError
+
+    def mark_notification_read(self, notification_id: str) -> None:
+        raise NotImplementedError
+
 
 # ---------------------------------------------------------------------------
 # In-Memory Implementation
@@ -176,6 +266,14 @@ class InMemoryRepository(DataRepository):
         self._buildings: dict[str, Building] = {}
         self._medical_facilities: dict[str, MedicalFacility] = {}
         self._roads: dict[str, Road] = {}
+        # Phase 7B: Shared operational objects
+        self._organizations: dict[str, Organization] = {}
+        self._needs: dict[str, Need] = {}
+        self._resource_offers: dict[str, ResourceOffer] = {}
+        self._operations: dict[str, Operation] = {}
+        self._operation_participants: dict[str, list[dict]] = {}  # operation_id -> [{org_id, role, joined_at}]
+        self._activity_events: list[ActivityEvent] = []
+        self._notifications: dict[str, Notification] = {}
 
     def clear(self):
         """Reset all data (for testing)."""
@@ -187,6 +285,13 @@ class InMemoryRepository(DataRepository):
         self._buildings.clear()
         self._medical_facilities.clear()
         self._roads.clear()
+        self._organizations.clear()
+        self._needs.clear()
+        self._resource_offers.clear()
+        self._operations.clear()
+        self._operation_participants.clear()
+        self._activity_events.clear()
+        self._notifications.clear()
 
     # --- Districts ---
 
@@ -433,6 +538,148 @@ class InMemoryRepository(DataRepository):
         )
         self.upsert_flood_snapshot(snapshot)
         return snapshot
+
+    # --- Organizations (Phase 7B) ---
+
+    def create_organization(self, org: Organization) -> Organization:
+        self._organizations[org.id] = org
+        return org
+
+    def get_organization(self, org_id: str) -> Optional[Organization]:
+        return self._organizations.get(org_id)
+
+    def list_organizations(self, active_only: bool = True) -> list[Organization]:
+        results = list(self._organizations.values())
+        if active_only:
+            results = [o for o in results if o.active]
+        return results
+
+    def update_organization(self, org: Organization) -> None:
+        self._organizations[org.id] = org
+
+    # --- Needs (Phase 7B) ---
+
+    def create_need(self, need: Need) -> Need:
+        self._needs[need.id] = need
+        return need
+
+    def get_need(self, need_id: str) -> Optional[Need]:
+        return self._needs.get(need_id)
+
+    def list_needs(self, district_id: str = None, status: str = None, urgency: str = None) -> list[Need]:
+        results = list(self._needs.values())
+        if district_id:
+            results = [n for n in results if n.district_id == district_id]
+        if status:
+            results = [n for n in results if n.status == status]
+        if urgency:
+            results = [n for n in results if n.urgency == urgency]
+        return results
+
+    def update_need(self, need: Need) -> None:
+        self._needs[need.id] = need
+
+    def update_need_status(self, need_id: str, status: str) -> Optional[Need]:
+        need = self._needs.get(need_id)
+        if need is None:
+            return None
+        need.status = status
+        from datetime import datetime as dt, timezone
+        need.updated_at = dt.now(timezone.utc)
+        return need
+
+    # --- Resource Offers (Phase 7B) ---
+
+    def create_resource_offer(self, offer: ResourceOffer) -> ResourceOffer:
+        self._resource_offers[offer.id] = offer
+        return offer
+
+    def get_resource_offer(self, offer_id: str) -> Optional[ResourceOffer]:
+        return self._resource_offers.get(offer_id)
+
+    def list_resource_offers(self, organization_id: str = None, district_id: str = None, status: str = None, resource_type: str = None) -> list[ResourceOffer]:
+        results = list(self._resource_offers.values())
+        if organization_id:
+            results = [o for o in results if o.organization_id == organization_id]
+        if district_id:
+            results = [o for o in results if o.district_id == district_id]
+        if status:
+            results = [o for o in results if o.status == status]
+        if resource_type:
+            results = [o for o in results if o.resource_type == resource_type]
+        return results
+
+    def update_resource_offer(self, offer: ResourceOffer) -> None:
+        self._resource_offers[offer.id] = offer
+
+    # --- Operations (Phase 7B) ---
+
+    def create_operation(self, operation: Operation) -> Operation:
+        self._operations[operation.id] = operation
+        return operation
+
+    def get_operation(self, operation_id: str) -> Optional[Operation]:
+        return self._operations.get(operation_id)
+
+    def list_operations(self, district_id: str = None, status: str = None, lead_organization_id: str = None) -> list[Operation]:
+        results = list(self._operations.values())
+        if district_id:
+            results = [o for o in results if o.district_id == district_id]
+        if status:
+            results = [o for o in results if o.status == status]
+        if lead_organization_id:
+            results = [o for o in results if o.lead_organization_id == lead_organization_id]
+        return results
+
+    def update_operation(self, operation: Operation) -> None:
+        self._operations[operation.id] = operation
+
+    def add_operation_participant(self, operation_id: str, organization_id: str, role: str = "support") -> None:
+        if operation_id not in self._operation_participants:
+            self._operation_participants[operation_id] = []
+        from datetime import datetime as dt, timezone
+        self._operation_participants[operation_id].append({
+            "operation_id": operation_id,
+            "organization_id": organization_id,
+            "role": role,
+            "joined_at": dt.now(timezone.utc),
+        })
+
+    def list_operation_participants(self, operation_id: str) -> list[dict]:
+        return self._operation_participants.get(operation_id, [])
+
+    # --- Activity Events (Phase 7B) ---
+
+    def append_activity_event(self, event: ActivityEvent) -> None:
+        self._activity_events.append(event)
+
+    def list_activity_events(self, entity_type: str = None, entity_id: str = None, limit: int = 50) -> list[ActivityEvent]:
+        results = self._activity_events
+        if entity_type:
+            results = [e for e in results if e.entity_type == entity_type]
+        if entity_id:
+            results = [e for e in results if e.entity_id == entity_id]
+        # Sort by created_at descending (most recent first)
+        results.sort(key=lambda e: e.created_at, reverse=True)
+        return results[:limit]
+
+    # --- Notifications (Phase 7B) ---
+
+    def create_notification(self, notification: Notification) -> Notification:
+        self._notifications[notification.id] = notification
+        return notification
+
+    def list_notifications(self, recipient_id: str, unread_only: bool = False, limit: int = 50) -> list[Notification]:
+        results = [n for n in self._notifications.values() if n.recipient_id == recipient_id]
+        if unread_only:
+            results = [n for n in results if not n.read]
+        results.sort(key=lambda n: n.created_at, reverse=True)
+        return results[:limit]
+
+    def mark_notification_read(self, notification_id: str) -> None:
+        notif = self._notifications.get(notification_id)
+        if notif:
+            notif.read = True
 
 
 # ---------------------------------------------------------------------------

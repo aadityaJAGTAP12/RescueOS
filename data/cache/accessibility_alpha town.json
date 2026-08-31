@@ -1,0 +1,108 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-08-30T08:04:36Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+    {
+      "type": "node",
+      "id": 2683567624,
+      "lat": 26.3278732,
+      "lon": 94.5394124,
+      "tags": {
+        "addr:district": "Mokokchung",
+        "addr:full": "A.M Road",
+        "addr:postcode": "798601",
+        "addr:state": "Nagaland",
+        "amenity": "clinic",
+        "name": "Woodland Nursing Home",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2686563541,
+      "lat": 26.3240761,
+      "lon": 94.5217855,
+      "tags": {
+        "amenity": "hospital",
+        "designation": "Private Clinic",
+        "emergency": "no",
+        "name": "Modern Clinic"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2689917278,
+      "lat": 26.3243522,
+      "lon": 94.5177439,
+      "tags": {
+        "amenity": "hospital",
+        "emergency": "no",
+        "name": "Doctor's Clinic & Mediciner"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2696256995,
+      "lat": 26.3253666,
+      "lon": 94.5224108,
+      "tags": {
+        "amenity": "hospital",
+        "emergency": "no",
+        "name": "Impur Mission Hospital Clinic"
+      }
+    },
+    {
+      "type": "node",
+      "id": 4101022014,
+      "lat": 26.5068894,
+      "lon": 94.4130927,
+      "tags": {
+        "amenity": "hospital",
+        "emergency": "no",
+        "name": "Govt Dispensary"
+      }
+    },
+    {
+      "type": "node",
+      "id": 5074262121,
+      "lat": 26.3933509,
+      "lon": 94.5331556,
+      "tags": {
+        "amenity": "hospital",
+        "name": "Community Health Centre",
+        "name:en": "Community Health Centre"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7614502531,
+      "lat": 26.330963,
+      "lon": 94.530994,
+      "tags": {
+        "addr:district": "Mokokchung",
+        "addr:full": "Mokokchung-Amguri Road, Sungkomen,",
+        "addr:postcode": "798601",
+        "addr:state": "Nagaland",
+        "amenity": "hospital",
+        "name": "Lenjem Hospital",
+        "source": "Local Knowledge"
+      }
+    },
+    {
+      "type": "node",
+      "id": 11356598239,
+      "lat": 26.4555109,
+      "lon": 94.5520485,
+      "tags": {
+        "addr:district": "Mokokchung",
+        "amenity": "hospital",
+        "healthcare": "hospital",
+        "name": "Pharmacy"
+      }
+    }
+  ]
+}

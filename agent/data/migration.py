@@ -1,13 +1,16 @@
 """
-Phase 3: Data Migration
+Phase 3 + 7D: Data Migration
 
 Imports existing ReliefOS data into the generalized repository layer.
 
 Migration sources:
-1. data/sivasagar_flood.geojson → FloodSnapshot + District + Settlements
-2. data/community_reports.json → FieldReport
-3. data/overrides.json → Override
-4. data/cache/*.json → preserved as-is (cache-first behavior maintained)
+1. data/sivasagar_flood.geojson → FloodSnapshot (Sivasagar)
+2. data/raw/floods/jorhat_flood_2026-07-29_2026-07-30.geojson → FloodSnapshot (Jorhat)
+3. data/raw/floods/charaideo_flood_2026-07-29_2026-07-30.geojson → FloodSnapshot (Charaideo)
+4. data/raw/floods/golaghat_flood_2026-07-22_2026-07-23.geojson → FloodSnapshot (Golaghat)
+5. data/community_reports.json → FieldReport
+6. data/overrides.json → Override
+7. data/cache/*.json → preserved as-is (cache-first behavior maintained)
 
 This module is idempotent — running it twice doesn't create duplicates.
 """
@@ -33,27 +36,57 @@ from agent.data.models import (
 from agent.data.repository import DataRepository, get_repository
 
 
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------
 # Paths
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _FLOOD_GEOJSON_PATH = os.path.join(_BASE_DIR, "data", "sivasagar_flood.geojson")
 _COMMUNITY_REPORTS_PATH = os.path.join(_BASE_DIR, "data", "community_reports.json")
 _OVERRIDES_PATH = os.path.join(_BASE_DIR, "data", "overrides.json")
 
+# Real flood GeoJSON files for the 3 other districts
+_RAW_FLOODS_DIR = os.path.join(_BASE_DIR, "data", "raw", "floods")
 
-# ---------------------------------------------------------------------------
-# Sivasagar seed data (synthetic district + known locations)
-# ---------------------------------------------------------------------------
 
-SIVASAGAR_DISTRICT = District(
-    id="sivasagar",
-    name="Sivasagar",
-    state="Assam",
-    country="India",
-)
+# -----------------------------------------------------------------------
+# District definitions (all 4 real districts)
+# -----------------------------------------------------------------------
 
+# Each district needs: id, name, state, country, and its flood source file.
+# The observation dates come from the actual Sentinel-1 data timestamps.
+DISTRICT_FLOOD_SOURCES = {
+    "sivasagar": {
+        "file": _FLOOD_GEOJSON_PATH,
+        "observed_at": "2026-07-01T00:00:00+00:00",
+        "source": "Sentinel-1 SAR (Earth Engine export)",
+    },
+    "jorhat": {
+        "file": os.path.join(_RAW_FLOODS_DIR, "jorhat_flood_2026-07-29_2026-07-30.geojson"),
+        "observed_at": "2026-07-29T00:00:00+00:00",
+        "source": "Sentinel-1 SAR (Earth Engine export)",
+    },
+    "charaideo": {
+        "file": os.path.join(_RAW_FLOODS_DIR, "charaideo_flood_2026-07-29_2026-07-30.geojson"),
+        "observed_at": "2026-07-29T00:00:00+00:00",
+        "source": "Sentinel-1 SAR (Earth Engine export)",
+    },
+    "golaghat": {
+        "file": os.path.join(_RAW_FLOODS_DIR, "golaghat_flood_2026-07-22_2026-07-23.geojson"),
+        "observed_at": "2026-07-22T00:00:00+00:00",
+        "source": "Sentinel-1 SAR (Earth Engine export)",
+    },
+}
+
+# All four districts are in Assam, India
+ALL_DISTRICTS = {
+    "sivasagar": District(id="sivasagar", name="Sivasagar", state="Assam", country="India"),
+    "jorhat": District(id="jorhat", name="Jorhat", state="Assam", country="India"),
+    "charaideo": District(id="charaideo", name="Charaideo", state="Assam", country="India"),
+    "golaghat": District(id="golaghat", name="Golaghat", state="Assam", country="India"),
+}
+
+# Settlements for Sivasagar (existing seed data, preserved)
 SIVASAGAR_SETTLEMENTS = [
     Settlement(
         id="sivasagar",
@@ -82,56 +115,87 @@ SIVASAGAR_SETTLEMENTS = [
 ]
 
 
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------
 # Migration functions
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------
 
-def migrate_flood_data(repo: DataRepository = None) -> Optional[FloodSnapshot]:
+def ensure_districts(repo: DataRepository) -> list[District]:
+    """Ensure all 4 districts exist in the database. Idempotent."""
+    created = []
+    for district in ALL_DISTRICTS.values():
+        existing = repo.get_district(district.id)
+        if existing is None:
+            repo.upsert_district(district)
+            created.append(district)
+            print(f"  [MIGRATION] Created district: {district.id}")
+    return created
+
+
+def migrate_flood_data(repo: DataRepository = None) -> dict[str, Optional[FloodSnapshot]]:
     """
-    Import data/sivasagar_flood.geojson into the generalized repository.
+    Import all 4 real flood snapshots into the generalized repository.
 
-    Returns the created FloodSnapshot, or None if file not found.
+    Uses the existing import_flood_geojson() which is idempotent via
+    deterministic snapshot IDs and ON CONFLICT DO UPDATE.
+
+    Returns dict mapping district_id → FloodSnapshot (or None if file missing).
     """
     if repo is None:
         repo = get_repository()
 
-    # Ensure district exists
-    if repo.get_district("sivasagar") is None:
-        repo.upsert_district(SIVASAGAR_DISTRICT)
+    # Ensure districts exist first
+    ensure_districts(repo)
 
-    # Ensure settlements exist
+    # Ensure Sivasagar settlements exist (backward compat)
     for s in SIVASAGAR_SETTLEMENTS:
         if repo.get_settlement(s.id) is None:
             repo.upsert_settlement(s)
 
-    # Load and import flood GeoJSON
-    if not os.path.exists(_FLOOD_GEOJSON_PATH):
-        print(f"  [MIGRATION] Flood GeoJSON not found: {_FLOOD_GEOJSON_PATH}")
-        return None
+    results = {}
 
-    try:
-        with open(_FLOOD_GEOJSON_PATH, "r") as f:
-            geojson = json.load(f)
-    except Exception as e:
-        print(f"  [MIGRATION] Error loading flood GeoJSON: {e}")
-        return None
+    for district_id, flood_info in DISTRICT_FLOOD_SOURCES.items():
+        geojson_path = flood_info["file"]
+        observed_at = flood_info["observed_at"]
+        source = flood_info["source"]
 
-    # Check if already imported (idempotent)
-    snapshot_id = make_flood_snapshot_id("sivasagar", datetime(2026, 7, 1, tzinfo=timezone.utc))
-    existing = repo.get_flood_snapshot(snapshot_id)
-    if existing:
-        print(f"  [MIGRATION] Flood snapshot already exists: {snapshot_id}")
-        return existing
+        if not os.path.exists(geojson_path):
+            print(f"  [MIGRATION] Flood GeoJSON not found for {district_id}: {geojson_path}")
+            results[district_id] = None
+            continue
 
-    # Import
-    snapshot = repo.import_flood_geojson(
-        geojson=geojson,
-        district_id="sivasagar",
-        source="Sentinel-1 SAR (Earth Engine export)",
-        observed_at="2026-07-01T00:00:00+00:00",
-    )
-    print(f"  [MIGRATION] Imported flood snapshot: {snapshot.id} ({snapshot.polygon_count} polygons)")
-    return snapshot
+        try:
+            with open(geojson_path, "r") as f:
+                geojson = json.load(f)
+        except Exception as e:
+            print(f"  [MIGRATION] Error loading flood GeoJSON for {district_id}: {e}")
+            results[district_id] = None
+            continue
+
+        features = geojson.get("features", [])
+        if not features:
+            print(f"  [MIGRATION] Empty flood GeoJSON for {district_id}")
+            results[district_id] = None
+            continue
+
+        # Check idempotency — skip if already imported
+        snapshot_id = make_flood_snapshot_id(district_id, datetime.fromisoformat(observed_at))
+        existing = repo.get_flood_snapshot(snapshot_id)
+        if existing:
+            print(f"  [MIGRATION] Flood snapshot already exists: {snapshot_id} ({existing.polygon_count} polygons)")
+            results[district_id] = existing
+            continue
+
+        # Import using the existing idempotent method
+        snapshot = repo.import_flood_geojson(
+            geojson=geojson,
+            district_id=district_id,
+            source=source,
+            observed_at=observed_at,
+        )
+        print(f"  [MIGRATION] Imported flood snapshot: {snapshot.id} ({snapshot.polygon_count} polygons) for {district_id}")
+        results[district_id] = snapshot
+
+    return results
 
 
 def migrate_community_reports(repo: DataRepository = None) -> list[FieldReport]:
@@ -172,8 +236,6 @@ def migrate_community_reports(repo: DataRepository = None) -> list[FieldReport]:
         # Map source type
         source_type = raw.get("source", "community_report")
         provenance = Provenance.REAL
-        if source_type == "field_intelligence_text":
-            provenance = Provenance.REAL  # still real, just different source
 
         report = FieldReport(
             id=report_id,
@@ -265,19 +327,38 @@ def run_full_migration(repo: DataRepository = None) -> dict:
     if repo is None:
         repo = get_repository()
 
-    print("\n[PHASE 3 MIGRATION] Starting data migration...")
+    print("\n[PHASE 3+7D MIGRATION] Starting data migration...")
 
-    flood = migrate_flood_data(repo)
+    # 1. Ensure districts exist
+    ensure_districts(repo)
+
+    # 2. Import all 4 flood snapshots
+    flood_results = migrate_flood_data(repo)
+
+    # 3. Import community reports
     reports = migrate_community_reports(repo)
+
+    # 4. Import overrides
     overrides = migrate_overrides(repo)
 
+    # Build summary
+    flood_summary = {}
+    for district_id, snapshot in flood_results.items():
+        if snapshot:
+            flood_summary[district_id] = {
+                "id": snapshot.id,
+                "polygon_count": snapshot.polygon_count,
+                "observed_at": snapshot.observed_at.isoformat(),
+                "source": snapshot.source,
+            }
+
     summary = {
-        "flood_snapshot": flood.to_dict() if flood else None,
+        "districts": [d.to_dict() for d in repo.list_districts()],
+        "flood_snapshots": flood_summary,
+        "settlements": [s.to_dict() for s in repo.list_settlements()],
         "community_reports_imported": len(reports),
         "overrides_imported": len(overrides),
-        "districts": [d.to_dict() for d in repo.list_districts()],
-        "settlements": [s.to_dict() for s in repo.list_settlements()],
     }
 
-    print("[PHASE 3 MIGRATION] Complete.")
+    print("[PHASE 3+7D MIGRATION] Complete.")
     return summary

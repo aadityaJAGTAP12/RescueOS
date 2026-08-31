@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Link, useLocation } from "react-router-dom";
+import { WorkspaceProvider } from "./lib/workspaceContext";
+import NetworkWorkspace from "./components/workspace/NetworkWorkspace";
 import Header from "./components/Header";
 import LocationSelector from "./components/LocationSelector";
 import SituationMap from "./components/SituationMap";
@@ -120,25 +122,36 @@ function DashboardPage() {
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-stone-50 flex flex-col">
-        <Header />
-        <main className="flex-1 max-w-[1600px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-          <Routes>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/field-intelligence" element={<FieldIntelligencePage />} />
-          </Routes>
-        </main>
-        <footer className="border-t border-stone-200 bg-white/50">
-          <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-            <span className="text-[11px] text-stone-400">
-              ReliefOS v0.1 — Operations Intelligence Workspace
-            </span>
-            <span className="text-[11px] text-stone-400">
-              Sivasagar District, Assam, India
-            </span>
-          </div>
-        </footer>
-      </div>
+      <WorkspaceProvider>
+        <Routes>
+          {/* Primary route: map-first operational workspace */}
+          <Route path="/" element={<NetworkWorkspace />} />
+
+          {/* Legacy routes: preserved for backwards compatibility */}
+          <Route
+            path="/legacy"
+            element={
+              <div className="min-h-screen bg-stone-50 flex flex-col">
+                <Header />
+                <main className="flex-1 max-w-[1600px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+                  <DashboardPage />
+                </main>
+              </div>
+            }
+          />
+          <Route
+            path="/field-intelligence"
+            element={
+              <div className="min-h-screen bg-stone-50 flex flex-col">
+                <Header />
+                <main className="flex-1 max-w-[1600px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+                  <FieldIntelligencePage />
+                </main>
+              </div>
+            }
+          />
+        </Routes>
+      </WorkspaceProvider>
     </BrowserRouter>
   );
 }

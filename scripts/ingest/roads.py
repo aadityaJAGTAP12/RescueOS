@@ -148,6 +148,7 @@ def ingest_roads(repo=None, max_per_district: int = 2000):
                 geometry_coords=road_data["geometry_coords"],
                 flood_affected=False,  # Not set permanently
                 provenance=Provenance.REAL,
+                is_bridge=road_data.get("bridge", False),
             )
             repo.upsert_roads([road])
             ingested += 1

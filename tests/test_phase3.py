@@ -729,7 +729,11 @@ class TestSivasagarBackwardCompatibility:
         """Sivasagar flood data can be imported."""
         from agent.data.migration import migrate_flood_data
 
-        snapshot = migrate_flood_data(fresh_repository)
+        result = migrate_flood_data(fresh_repository)
+        assert result is not None
+        # migrate_flood_data now returns dict[district_id -> FloodSnapshot]
+        assert "sivasagar" in result
+        snapshot = result["sivasagar"]
         assert snapshot is not None
         assert snapshot.district_id == "sivasagar"
         assert snapshot.polygon_count > 0

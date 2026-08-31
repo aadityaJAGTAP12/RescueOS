@@ -39,6 +39,12 @@ from agent.data.models import (
     Provenance,
     VerificationState,
     make_flood_snapshot_id,
+    Organization,
+    Need,
+    ResourceOffer,
+    Operation,
+    ActivityEvent,
+    Notification,
 )
 from agent.data.repository import DataRepository
 from agent.data.schema import (
@@ -700,6 +706,346 @@ class PostgresRepository(DataRepository):
         return snapshot
 
     # ------------------------------------------------------------------
+    # Organizations (Phase 7B)
+    # ------------------------------------------------------------------
+
+    def create_organization(self, org: Organization) -> Organization:
+        from agent.data.schema import organizations as orgs_table
+        stmt = pg_insert(orgs_table).values(
+            id=org.id,
+            name=org.name,
+            organization_type=org.organization_type,
+            description=org.description,
+            published_capabilities=org.published_capabilities,
+            public_contact=org.public_contact,
+            active=org.active,
+            metadata=org.metadata,
+        )
+        self._execute(stmt)
+        return org
+
+    def get_organization(self, org_id: str) -> Optional[Organization]:
+        from agent.data.schema import organizations as orgs_table
+        row = self._execute_fetchone(
+            select(orgs_table).where(orgs_table.c.id == org_id)
+        )
+        if row is None:
+            return None
+        return self._row_to_organization(row)
+
+    def list_organizations(self, active_only: bool = True) -> list[Organization]:
+        from agent.data.schema import organizations as orgs_table
+        stmt = select(orgs_table)
+        if active_only:
+            stmt = stmt.where(orgs_table.c.active == True)
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_organization(r) for r in rows]
+
+    def update_organization(self, org: Organization) -> None:
+        from agent.data.schema import organizations as orgs_table
+        stmt = update(orgs_table).where(orgs_table.c.id == org.id).values(
+            name=org.name,
+            organization_type=org.organization_type,
+            description=org.description,
+            published_capabilities=org.published_capabilities,
+            public_contact=org.public_contact,
+            active=org.active,
+            updated_at=datetime.now(timezone.utc),
+            metadata=org.metadata,
+        )
+        self._execute(stmt)
+
+    # ------------------------------------------------------------------
+    # Needs (Phase 7B)
+    # ------------------------------------------------------------------
+
+    def create_need(self, need: Need) -> Need:
+        from agent.data.schema import needs as needs_table
+        stmt = pg_insert(needs_table).values(
+            id=need.id,
+            need_type=need.need_type,
+            title=need.title,
+            description=need.description,
+            district_id=need.district_id,
+            lat=need.lat,
+            lon=need.lon,
+            location_name=need.location_name,
+            urgency=need.urgency,
+            status=need.status,
+            requested_resources=need.requested_resources,
+            reporter_id=need.reporter_id,
+            reporter_type=need.reporter_type,
+            confidence=need.confidence,
+            metadata=need.metadata,
+        )
+        self._execute(stmt)
+        return need
+
+    def get_need(self, need_id: str) -> Optional[Need]:
+        from agent.data.schema import needs as needs_table
+        row = self._execute_fetchone(
+            select(needs_table).where(needs_table.c.id == need_id)
+        )
+        if row is None:
+            return None
+        return self._row_to_need(row)
+
+    def list_needs(self, district_id: str = None, status: str = None, urgency: str = None) -> list[Need]:
+        from agent.data.schema import needs as needs_table
+        stmt = select(needs_table)
+        if district_id:
+            stmt = stmt.where(needs_table.c.district_id == district_id)
+        if status:
+            stmt = stmt.where(needs_table.c.status == status)
+        if urgency:
+            stmt = stmt.where(needs_table.c.urgency == urgency)
+        stmt = stmt.order_by(needs_table.c.created_at.desc())
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_need(r) for r in rows]
+
+    def update_need(self, need: Need) -> None:
+        from agent.data.schema import needs as needs_table
+        stmt = update(needs_table).where(needs_table.c.id == need.id).values(
+            need_type=need.need_type,
+            title=need.title,
+            description=need.description,
+            district_id=need.district_id,
+            lat=need.lat,
+            lon=need.lon,
+            location_name=need.location_name,
+            urgency=need.urgency,
+            status=need.status,
+            requested_resources=need.requested_resources,
+            reporter_id=need.reporter_id,
+            reporter_type=need.reporter_type,
+            confidence=need.confidence,
+            updated_at=datetime.now(timezone.utc),
+            metadata=need.metadata,
+        )
+        self._execute(stmt)
+
+    def update_need_status(self, need_id: str, status: str) -> Optional[Need]:
+        from agent.data.schema import needs as needs_table
+        stmt = update(needs_table).where(needs_table.c.id == need_id).values(
+            status=status,
+            updated_at=datetime.now(timezone.utc),
+        )
+        self._execute(stmt)
+        return self.get_need(need_id)
+
+    # ------------------------------------------------------------------
+    # Resource Offers (Phase 7B)
+    # ------------------------------------------------------------------
+
+    def create_resource_offer(self, offer: ResourceOffer) -> ResourceOffer:
+        from agent.data.schema import resource_offers as offers_table
+        stmt = pg_insert(offers_table).values(
+            id=offer.id,
+            organization_id=offer.organization_id,
+            resource_type=offer.resource_type,
+            quantity=offer.quantity,
+            unit=offer.unit,
+            lat=offer.lat,
+            lon=offer.lon,
+            location_name=offer.location_name,
+            district_id=offer.district_id,
+            status=offer.status,
+            notes=offer.notes,
+            metadata=offer.metadata,
+        )
+        self._execute(stmt)
+        return offer
+
+    def get_resource_offer(self, offer_id: str) -> Optional[ResourceOffer]:
+        from agent.data.schema import resource_offers as offers_table
+        row = self._execute_fetchone(
+            select(offers_table).where(offers_table.c.id == offer_id)
+        )
+        if row is None:
+            return None
+        return self._row_to_resource_offer(row)
+
+    def list_resource_offers(self, organization_id: str = None, district_id: str = None, status: str = None, resource_type: str = None) -> list[ResourceOffer]:
+        from agent.data.schema import resource_offers as offers_table
+        stmt = select(offers_table)
+        if organization_id:
+            stmt = stmt.where(offers_table.c.organization_id == organization_id)
+        if district_id:
+            stmt = stmt.where(offers_table.c.district_id == district_id)
+        if status:
+            stmt = stmt.where(offers_table.c.status == status)
+        if resource_type:
+            stmt = stmt.where(offers_table.c.resource_type == resource_type)
+        stmt = stmt.order_by(offers_table.c.created_at.desc())
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_resource_offer(r) for r in rows]
+
+    def update_resource_offer(self, offer: ResourceOffer) -> None:
+        from agent.data.schema import resource_offers as offers_table
+        stmt = update(offers_table).where(offers_table.c.id == offer.id).values(
+            organization_id=offer.organization_id,
+            resource_type=offer.resource_type,
+            quantity=offer.quantity,
+            unit=offer.unit,
+            lat=offer.lat,
+            lon=offer.lon,
+            location_name=offer.location_name,
+            district_id=offer.district_id,
+            status=offer.status,
+            notes=offer.notes,
+            updated_at=datetime.now(timezone.utc),
+            metadata=offer.metadata,
+        )
+        self._execute(stmt)
+
+    # ------------------------------------------------------------------
+    # Operations (Phase 7B)
+    # ------------------------------------------------------------------
+
+    def create_operation(self, operation: Operation) -> Operation:
+        from agent.data.schema import operations as ops_table
+        stmt = pg_insert(ops_table).values(
+            id=operation.id,
+            name=operation.name,
+            operation_type=operation.operation_type,
+            description=operation.description,
+            need_id=operation.need_id,
+            lead_organization_id=operation.lead_organization_id,
+            district_id=operation.district_id,
+            lat=operation.lat,
+            lon=operation.lon,
+            location_name=operation.location_name,
+            status=operation.status,
+            metadata=operation.metadata,
+        )
+        self._execute(stmt)
+        return operation
+
+    def get_operation(self, operation_id: str) -> Optional[Operation]:
+        from agent.data.schema import operations as ops_table
+        row = self._execute_fetchone(
+            select(ops_table).where(ops_table.c.id == operation_id)
+        )
+        if row is None:
+            return None
+        return self._row_to_operation(row)
+
+    def list_operations(self, district_id: str = None, status: str = None, lead_organization_id: str = None) -> list[Operation]:
+        from agent.data.schema import operations as ops_table
+        stmt = select(ops_table)
+        if district_id:
+            stmt = stmt.where(ops_table.c.district_id == district_id)
+        if status:
+            stmt = stmt.where(ops_table.c.status == status)
+        if lead_organization_id:
+            stmt = stmt.where(ops_table.c.lead_organization_id == lead_organization_id)
+        stmt = stmt.order_by(ops_table.c.created_at.desc())
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_operation(r) for r in rows]
+
+    def update_operation(self, operation: Operation) -> None:
+        from agent.data.schema import operations as ops_table
+        stmt = update(ops_table).where(ops_table.c.id == operation.id).values(
+            name=operation.name,
+            operation_type=operation.operation_type,
+            description=operation.description,
+            need_id=operation.need_id,
+            lead_organization_id=operation.lead_organization_id,
+            district_id=operation.district_id,
+            lat=operation.lat,
+            lon=operation.lon,
+            location_name=operation.location_name,
+            status=operation.status,
+            updated_at=datetime.now(timezone.utc),
+            metadata=operation.metadata,
+        )
+        self._execute(stmt)
+
+    def add_operation_participant(self, operation_id: str, organization_id: str, role: str = "support") -> None:
+        from agent.data.schema import operation_participants as op_table
+        participant_id = f"{operation_id}_{organization_id}"
+        stmt = pg_insert(op_table).values(
+            id=participant_id,
+            operation_id=operation_id,
+            organization_id=organization_id,
+            role=role,
+        )
+        self._execute(stmt)
+
+    def list_operation_participants(self, operation_id: str) -> list[dict]:
+        from agent.data.schema import operation_participants as op_table
+        stmt = select(op_table).where(op_table.c.operation_id == operation_id)
+        rows = self._execute_fetchall(stmt)
+        return [{
+            "operation_id": r.operation_id,
+            "organization_id": r.organization_id,
+            "role": r.role,
+            "joined_at": r.joined_at.isoformat() if r.joined_at else None,
+        } for r in rows]
+
+    # ------------------------------------------------------------------
+    # Activity Events (Phase 7B)
+    # ------------------------------------------------------------------
+
+    def append_activity_event(self, event: ActivityEvent) -> None:
+        from agent.data.schema import activity_events as events_table
+        stmt = pg_insert(events_table).values(
+            id=event.id,
+            entity_type=event.entity_type,
+            entity_id=event.entity_id,
+            event_type=event.event_type,
+            actor=event.actor,
+            detail=event.detail,
+            metadata=event.metadata,
+        )
+        self._execute(stmt)
+
+    def list_activity_events(self, entity_type: str = None, entity_id: str = None, limit: int = 50) -> list[ActivityEvent]:
+        from agent.data.schema import activity_events as events_table
+        stmt = select(events_table)
+        if entity_type:
+            stmt = stmt.where(events_table.c.entity_type == entity_type)
+        if entity_id:
+            stmt = stmt.where(events_table.c.entity_id == entity_id)
+        stmt = stmt.order_by(events_table.c.created_at.desc()).limit(limit)
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_activity_event(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Notifications (Phase 7B)
+    # ------------------------------------------------------------------
+
+    def create_notification(self, notification: Notification) -> Notification:
+        from agent.data.schema import notifications as notif_table
+        stmt = pg_insert(notif_table).values(
+            id=notification.id,
+            recipient_id=notification.recipient_id,
+            notification_type=notification.notification_type,
+            title=notification.title,
+            message=notification.message,
+            entity_type=notification.entity_type,
+            entity_id=notification.entity_id,
+            read=notification.read,
+            metadata=notification.metadata,
+        )
+        self._execute(stmt)
+        return notification
+
+    def list_notifications(self, recipient_id: str, unread_only: bool = False, limit: int = 50) -> list[Notification]:
+        from agent.data.schema import notifications as notif_table
+        stmt = select(notif_table).where(notif_table.c.recipient_id == recipient_id)
+        if unread_only:
+            stmt = stmt.where(notif_table.c.read == False)
+        stmt = stmt.order_by(notif_table.c.created_at.desc()).limit(limit)
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_notification(r) for r in rows]
+
+    def mark_notification_read(self, notification_id: str) -> None:
+        from agent.data.schema import notifications as notif_table
+        stmt = update(notif_table).where(notif_table.c.id == notification_id).values(read=True)
+        self._execute(stmt)
+
+    # ------------------------------------------------------------------
     # Row -> Model conversion helpers
     # ------------------------------------------------------------------
 
@@ -789,19 +1135,134 @@ class PostgresRepository(DataRepository):
         )
 
     def _row_to_road(self, row) -> Road:
+        # Extract geometry coordinates from PostGIS if available
+        geometry_coords = []
+        geom = getattr(row, 'geometry', None)
+        if geom is not None:
+            try:
+                from geoalchemy2 import WKBElement
+                if isinstance(geom, WKBElement):
+                    with self._engine.connect() as conn:
+                        result = conn.execute(
+                            text("SELECT ST_AsText(:geom)"), {"geom": geom}
+                        )
+                        wkt_row = result.fetchone()
+                        if wkt_row and wkt_row[0]:
+                            geometry_coords = _parse_linestring_coords(wkt_row[0])
+            except Exception:
+                pass
+
         r = Road(
             id=row.id,
             district_id=row.district_id,
             name=row.name,
             highway_type=row.highway_type,
             osm_id=row.osm_id,
-            geometry_coords=[],  # Geometry stored as WKB, not needed for Road model
+            geometry_coords=geometry_coords,
             flood_affected=row.flood_affected,
             provenance=Provenance(row.provenance),
         )
         r.tags = getattr(row, 'tags', {}) or {}
         r.is_bridge = getattr(row, 'is_bridge', False)
         return r
+
+    # --- Phase 7B row converters ---
+
+    def _row_to_organization(self, row) -> Organization:
+        return Organization(
+            id=row.id,
+            name=row.name,
+            organization_type=row.organization_type,
+            description=row.description,
+            published_capabilities=row.published_capabilities or [],
+            public_contact=row.public_contact or {},
+            active=row.active,
+            created_at=row.created_at,
+            metadata=row.metadata or {},
+        )
+
+    def _row_to_need(self, row) -> Need:
+        return Need(
+            id=row.id,
+            need_type=row.need_type,
+            title=row.title,
+            description=row.description,
+            district_id=row.district_id,
+            lat=row.lat,
+            lon=row.lon,
+            location_name=row.location_name,
+            urgency=row.urgency,
+            status=row.status,
+            requested_resources=row.requested_resources or [],
+            reporter_id=row.reporter_id,
+            reporter_type=row.reporter_type,
+            confidence=row.confidence,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            metadata=row.metadata or {},
+        )
+
+    def _row_to_resource_offer(self, row) -> ResourceOffer:
+        return ResourceOffer(
+            id=row.id,
+            organization_id=row.organization_id,
+            resource_type=row.resource_type,
+            quantity=row.quantity,
+            unit=row.unit,
+            lat=row.lat,
+            lon=row.lon,
+            location_name=row.location_name,
+            district_id=row.district_id,
+            status=row.status,
+            notes=row.notes,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            metadata=row.metadata or {},
+        )
+
+    def _row_to_operation(self, row) -> Operation:
+        return Operation(
+            id=row.id,
+            name=row.name,
+            operation_type=row.operation_type,
+            description=row.description,
+            need_id=row.need_id,
+            lead_organization_id=row.lead_organization_id,
+            district_id=row.district_id,
+            lat=row.lat,
+            lon=row.lon,
+            location_name=row.location_name,
+            status=row.status,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            metadata=row.metadata or {},
+        )
+
+    def _row_to_activity_event(self, row) -> ActivityEvent:
+        return ActivityEvent(
+            id=row.id,
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            event_type=row.event_type,
+            actor=row.actor,
+            detail=row.detail,
+            created_at=row.created_at,
+            metadata=row.metadata or {},
+        )
+
+    def _row_to_notification(self, row) -> Notification:
+        return Notification(
+            id=row.id,
+            recipient_id=row.recipient_id,
+            notification_type=row.notification_type,
+            title=row.title,
+            message=row.message,
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            read=row.read,
+            created_at=row.created_at,
+            metadata=row.metadata or {},
+        )
 
     def _row_geometry_to_wkt(self, row, col_name: str) -> Optional[str]:
         """Extract WKT from a PostGIS geometry column."""
@@ -888,3 +1349,50 @@ def _names_match(a: str, b: str) -> bool:
         if len(shorter) > len(longer) / 2:
             return True
     return False
+
+
+def _parse_linestring_coords(wkt: str) -> list[list[float]]:
+    """Parse a WKT LINESTRING or MULTILINESTRING into a flat list of [lon, lat] coords.
+
+    For MULTILINESTRING, returns the coordinates of the first linestring.
+    """
+    if not wkt:
+        return []
+
+    wkt = wkt.strip()
+
+    # Handle MULTILINESTRING(((lon lat, ...)))
+    if wkt.startswith("MULTILINESTRING"):
+        # Extract first linestring from MULTILINESTRING(((...), (...)))
+        inner = wkt[len("MULTILINESTRING"):].strip()
+        # Remove leading/trailing parens to get inner linestrings
+        if inner.startswith("(("):
+            inner = inner[1:]  # Remove one leading (
+        # Find first closing paren of first linestring
+        end = inner.find(")")
+        if end > 0:
+            inner = inner[1:end]  # Skip opening (
+        else:
+            inner = inner[1:]
+        wkt = inner
+    elif wkt.startswith("LINESTRING"):
+        wkt = wkt[len("LINESTRING"):].strip()
+        if wkt.startswith("("):
+            wkt = wkt[1:]
+        if wkt.endswith(")"):
+            wkt = wkt[:-1]
+
+    # Parse "lon1 lat1, lon2 lat2, ..."
+    coords = []
+    for pair in wkt.split(","):
+        pair = pair.strip()
+        parts = pair.split()
+        if len(parts) >= 2:
+            try:
+                lon = float(parts[0])
+                lat = float(parts[1])
+                coords.append([lon, lat])
+            except ValueError:
+                continue
+
+    return coords

@@ -206,6 +206,156 @@ roads = Table(
 
 
 # ---------------------------------------------------------------------------
+# Phase 7B: Shared Operational Objects
+# ---------------------------------------------------------------------------
+
+organizations = Table(
+    "organizations",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("name", String(512), nullable=False),
+    Column("organization_type", String(128), nullable=False, server_default="ngo"),
+    Column("description", Text, nullable=False, server_default=""),
+    Column("published_capabilities", JSON, nullable=False, server_default="[]"),
+    Column("public_contact", JSON, nullable=False, server_default="{}"),
+    Column("active", Boolean, nullable=False, server_default="true"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("metadata", JSON, nullable=False, server_default="{}"),
+)
+
+needs = Table(
+    "needs",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("need_type", String(128), nullable=False),
+    Column("title", String(512), nullable=False),
+    Column("description", Text, nullable=False, server_default=""),
+    Column("district_id", String(128), ForeignKey("districts.id", ondelete="SET NULL"), nullable=True),
+    Column("lat", Float, nullable=True),
+    Column("lon", Float, nullable=True),
+    Column("location_name", String(512), nullable=True),
+    Column("urgency", String(64), nullable=False, server_default="medium"),
+    Column("status", String(64), nullable=False, server_default="OPEN"),
+    Column("requested_resources", JSON, nullable=False, server_default="[]"),
+    Column("reporter_id", String(256), nullable=True),
+    Column("reporter_type", String(128), nullable=False, server_default="coordinator"),
+    Column("confidence", Float, nullable=False, server_default="0.5"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("metadata", JSON, nullable=False, server_default="{}"),
+    Index("ix_needs_district_id", "district_id"),
+    Index("ix_needs_status", "status"),
+    Index("ix_needs_urgency", "urgency"),
+    CheckConstraint(
+        "status IN ('OPEN', 'UNDER_REVIEW', 'RESPONDING', 'PARTIALLY_RESOLVED', 'RESOLVED', 'CLOSED')",
+        name="ck_needs_status"
+    ),
+    CheckConstraint(
+        "urgency IN ('critical', 'high', 'medium', 'low')",
+        name="ck_needs_urgency"
+    ),
+)
+
+resource_offers = Table(
+    "resource_offers",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("organization_id", String(256), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False),
+    Column("resource_type", String(128), nullable=False),
+    Column("quantity", Integer, nullable=False, server_default="0"),
+    Column("unit", String(64), nullable=False, server_default="units"),
+    Column("lat", Float, nullable=True),
+    Column("lon", Float, nullable=True),
+    Column("location_name", String(512), nullable=True),
+    Column("district_id", String(128), ForeignKey("districts.id", ondelete="SET NULL"), nullable=True),
+    Column("status", String(64), nullable=False, server_default="OFFERED"),
+    Column("notes", Text, nullable=False, server_default=""),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("metadata", JSON, nullable=False, server_default="{}"),
+    Index("ix_resource_offers_org_id", "organization_id"),
+    Index("ix_resource_offers_status", "status"),
+    Index("ix_resource_offers_district_id", "district_id"),
+    CheckConstraint(
+        "status IN ('OFFERED', 'ACCEPTED', 'DEPLOYED', 'WITHDRAWN', 'EXPIRED')",
+        name="ck_resource_offers_status"
+    ),
+)
+
+operations = Table(
+    "operations",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("name", String(512), nullable=False),
+    Column("operation_type", String(128), nullable=False, server_default="other"),
+    Column("description", Text, nullable=False, server_default=""),
+    Column("need_id", String(256), ForeignKey("needs.id", ondelete="SET NULL"), nullable=True),
+    Column("lead_organization_id", String(256), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True),
+    Column("district_id", String(128), ForeignKey("districts.id", ondelete="SET NULL"), nullable=True),
+    Column("lat", Float, nullable=True),
+    Column("lon", Float, nullable=True),
+    Column("location_name", String(512), nullable=True),
+    Column("status", String(64), nullable=False, server_default="PLANNING"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("metadata", JSON, nullable=False, server_default="{}"),
+    Index("ix_operations_district_id", "district_id"),
+    Index("ix_operations_status", "status"),
+    Index("ix_operations_lead_org_id", "lead_organization_id"),
+    CheckConstraint(
+        "status IN ('PLANNING', 'ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED')",
+        name="ck_operations_status"
+    ),
+)
+
+operation_participants = Table(
+    "operation_participants",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("operation_id", String(256), ForeignKey("operations.id", ondelete="CASCADE"), nullable=False),
+    Column("organization_id", String(256), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False),
+    Column("role", String(128), nullable=False, server_default="support"),
+    Column("joined_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Index("ix_operation_participants_operation_id", "operation_id"),
+    Index("ix_operation_participants_org_id", "organization_id"),
+)
+
+activity_events = Table(
+    "activity_events",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("entity_type", String(128), nullable=False),
+    Column("entity_id", String(256), nullable=False),
+    Column("event_type", String(128), nullable=False),
+    Column("actor", String(256), nullable=False, server_default=""),
+    Column("detail", Text, nullable=False, server_default=""),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("metadata", JSON, nullable=False, server_default="{}"),
+    Index("ix_activity_events_entity", "entity_type", "entity_id"),
+    Index("ix_activity_events_created_at", "created_at"),
+)
+
+notifications = Table(
+    "notifications",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("recipient_id", String(256), nullable=False),
+    Column("notification_type", String(128), nullable=False),
+    Column("title", String(512), nullable=False),
+    Column("message", Text, nullable=False, server_default=""),
+    Column("entity_type", String(128), nullable=True),
+    Column("entity_id", String(256), nullable=True),
+    Column("read", Boolean, nullable=False, server_default="false"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("metadata", JSON, nullable=False, server_default="{}"),
+    Index("ix_notifications_recipient_id", "recipient_id"),
+    Index("ix_notifications_read", "read"),
+    Index("ix_notifications_created_at", "created_at"),
+)
+
+
+# ---------------------------------------------------------------------------
 # Engine / helpers
 # ---------------------------------------------------------------------------
 

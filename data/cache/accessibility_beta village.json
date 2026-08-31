@@ -1,0 +1,58 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-08-30T08:04:36Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+    {
+      "type": "node",
+      "id": 7153255010,
+      "lat": 26.3792006,
+      "lon": 94.1396357,
+      "tags": {
+        "addr:district": "Jorhat",
+        "addr:full": "Raidangjuri Sector, Nagabat road, Titabar sub division, Nagabat weekly bazaar",
+        "addr:postcode": "785631",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Titabor",
+        "amenity": "clinic",
+        "description": "Primary Health Centre",
+        "healthcare": "centre",
+        "name": "Mini PHC, Raidangjuri",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7614502541,
+      "lat": 26.2704552,
+      "lon": 94.4469613,
+      "tags": {
+        "addr:district": "Mokokchung",
+        "addr:full": "2nd NAP Battalion, Alichen",
+        "addr:postcode": "798601",
+        "addr:state": "Nagaland",
+        "amenity": "hospital",
+        "name": "Unit Hospital",
+        "source": "Local Knowledge"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7614502542,
+      "lat": 26.2057603,
+      "lon": 94.2004138,
+      "tags": {
+        "addr:district": "Wokha",
+        "addr:full": "Sanis",
+        "addr:postcode": "797100",
+        "addr:state": "Nagaland",
+        "amenity": "hospital",
+        "name": "Sanis Hospital",
+        "source": "Local Knowledge"
+      }
+    }
+  ]
+}

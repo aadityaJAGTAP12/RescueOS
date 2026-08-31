@@ -1,0 +1,49 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-08-30T08:03:35Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+    {
+      "type": "node",
+      "id": 7100882239,
+      "lat": 25.411608,
+      "lon": 93.642689,
+      "tags": {
+        "addr:block": "Tening",
+        "addr:district": "Peren",
+        "addr:postcode": "797101",
+        "addr:state": "Nagaland",
+        "addr:subdistrict": "Tening",
+        "amenity": "clinic",
+        "description": "Primary Health Centre",
+        "healthcare": "centre",
+        "locality": "Azailong Village",
+        "name": "Azailong, PHC",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7100882276,
+      "lat": 25.5452776,
+      "lon": 93.6280258,
+      "tags": {
+        "addr:block": "Athibung",
+        "addr:district": "Peren",
+        "addr:landmark": "Toilou colony",
+        "addr:postcode": "797110",
+        "addr:state": "Nagaland",
+        "addr:subdistrict": "Athibung",
+        "amenity": "clinic",
+        "description": "Primary Health Centre",
+        "healthcare": "centre",
+        "locality": "Athibung Town",
+        "name": "Athibung",
+        "source": "OpenGovernmentData"
+      }
+    }
+  ]
+}
