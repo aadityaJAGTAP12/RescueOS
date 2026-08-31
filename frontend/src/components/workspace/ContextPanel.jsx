@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
+import { MAP_STYLES } from "../../lib/mapStyles";
 import { formatDistanceToNow } from "date-fns";
 
 // -------------------------------------------------------------------
@@ -1188,13 +1189,13 @@ function RoadDetail({ data, onClose }) {
   };
 
   const statusColor = {
-    open: "#16a34a",
-    uncertain: "#d97706",
-    blocked: "#dc2626",
-    submerged: "#dc2626",
-    damaged: "#dc2626",
-    passable: "#16a34a",
-    restricted: "#d97706",
+    open: MAP_STYLES.road.open.color,
+    uncertain: MAP_STYLES.road.uncertain.color,
+    blocked: MAP_STYLES.road.blocked.color,
+    submerged: MAP_STYLES.road.blocked.color,
+    damaged: MAP_STYLES.road.blocked.color,
+    passable: MAP_STYLES.road.open.color,
+    restricted: MAP_STYLES.road.uncertain.color,
   };
   const opStatus = data.operational_status || (data.flood_affected ? "uncertain" : "open");
 

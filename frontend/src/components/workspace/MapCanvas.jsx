@@ -5,6 +5,7 @@ import {
 import L from "leaflet";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
+import { MAP_STYLES } from "../../lib/mapStyles";
 
 // -------------------------------------------------------------------
 // Marker icon factories
@@ -319,7 +320,13 @@ function RoadLayer({ roads, overrides, visible, onRoadClick }) {
         status = isBlocked ? "blocked" : road.flood_affected ? "uncertain" : "open";
       }
 
-      const isBlocked = status === "blocked" || status === "submerged" || status === "damaged";
+      const styleSet = road.is_bridge ? MAP_STYLES.bridge : MAP_STYLES.road;
+      const styleKey = (status === "blocked" || status === "submerged" || status === "damaged")
+        ? "blocked"
+        : status === "uncertain"
+        ? "uncertain"
+        : "open";
+      const resolved = styleSet[styleKey] || styleSet.open;
 
       return {
         type: "Feature",
@@ -329,11 +336,7 @@ function RoadLayer({ roads, overrides, visible, onRoadClick }) {
           highway_type: road.highway_type,
           is_bridge: road.is_bridge,
           status,
-          color: isBlocked
-            ? "#dc2626"
-            : status === "uncertain"
-            ? "#d97706"
-            : "#16a34a",
+          color: resolved.color,
         },
         geometry: {
           type: "LineString",
@@ -348,12 +351,21 @@ function RoadLayer({ roads, overrides, visible, onRoadClick }) {
     <GeoJSON
       key={`roads-${features.length}`}
       data={{ type: "FeatureCollection", features }}
-      style={(feature) => ({
-        color: feature.properties.color,
-        weight: feature.properties.is_bridge ? 4 : 2,
-        opacity: 0.7,
-        dashArray: feature.properties.status === "blocked" ? "6, 4" : null,
-      })}
+      style={(feature) => {
+        const styleSet = feature.properties.is_bridge ? MAP_STYLES.bridge : MAP_STYLES.road;
+        const styleKey = (feature.properties.status === "blocked" || feature.properties.status === "submerged" || feature.properties.status === "damaged")
+          ? "blocked"
+          : feature.properties.status === "uncertain"
+          ? "uncertain"
+          : "open";
+        const resolved = styleSet[styleKey] || styleSet.open;
+        return {
+          color: resolved.color,
+          weight: resolved.width,
+          opacity: 0.7,
+          dashArray: resolved.dash ? resolved.dash.join(', ') : null,
+        };
+      }}
       onEachFeature={(feature, layer) => {
         const p = feature.properties;
         layer.bindPopup(

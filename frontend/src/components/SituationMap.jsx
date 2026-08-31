@@ -10,6 +10,7 @@ import {
 import L from "leaflet";
 import { Users, AlertTriangle, Stethoscope, X, ShieldAlert } from "lucide-react";
 import { getMarkerColor, cn } from "../lib/utils";
+import { MAP_STYLES, getRouteStyleKey } from "../lib/mapStyles";
 
 /* ------------------------------------------------------------------
    Custom marker icons
@@ -382,63 +383,106 @@ export default function SituationMap({ assessment, loading, route }) {
             <GeoJSON key="flood" data={floodGeoJSON} style={() => floodStyle} />
           )}
 
-          {visibleLayers.route && route?.geometry && (
-            <GeoJSON
-              key="route"
-              data={{
-                type: "FeatureCollection",
-                features: [
-                  {
-                    type: "Feature",
-                    properties: {
-                      distance: route.distance_km,
-                      duration: route.duration_minutes,
-                      source: route.source,
-                      crossesFlood: route.crosses_flood_zone,
-                      floodWarning: route.flood_warning,
-                    },
-                    geometry: {
-                      type: "LineString",
-                      coordinates: route.geometry,
-                    },
-                  },
-                ],
-              }}
-              style={{
-                color: route.crosses_flood_zone
-                  ? "#d97706"
-                  : route.status === "success"
-                    ? "#2563eb"
-                    : "#9ca3af",
-                weight: route.crosses_flood_zone ? 5 : 4,
-                opacity: 0.85,
-                dashArray: route.status === "success" && !route.crosses_flood_zone ? null : route.crosses_flood_zone ? null : "8, 8",
-              }}
-              onEachFeature={(feature, layer) => {
-                const props = feature.properties;
-                const floodSection = props.crossesFlood
-                  ? `<div style="font-size: 10px; color: #d97706; margin-top: 4px; font-weight: 600;">⚠ ${props.floodWarning || "Route crosses flood zone"}</div>`
-                  : "";
-                layer.bindPopup(
-                  `<div style="padding: 8px; min-width: 150px;">
-                    <div style="font-size: 12px; font-weight: 600; color: #1e293b; margin-bottom: 4px;">
-                      Route Information
-                    </div>
-                    <div style="font-size: 11px; color: #64748b; margin-bottom: 2px;">
-                      Distance: ${props.distance?.toFixed(1)} km
-                    </div>
-                    <div style="font-size: 11px; color: #64748b; margin-bottom: 2px;">
-                      Duration: ~${Math.round(props.duration)} minutes
-                    </div>
-                    <div style="font-size: 10px; color: #94a3b8; margin-top: 4px;">
-                      ${props.source}
-                    </div>
-                    ${floodSection}
-                  </div>`
-                );
-              }}
-            />
-          )}
+          {visibleLayers.route && route?.geometry && (() => {
+              const routeKey = getRouteStyleKey(route);
+              const routeStyle = MAP_STYLES.route[routeKey] || MAP_STYLES.route.normal;
+              const casingDash = routeStyle.dash ? routeStyle.dash.join(', ') : null;
+              const casingWeight = routeStyle.width + MAP_STYLES.routeCasing.extraWidth;
+              const blockedSegmentHtml = route.blocked_segments?.length
+                ? route.blocked_segments.map(s =>
+                    `<div style="margin-top:3px;padding:3px 5px;background:#fef2f2;border:1px solid #fecaca;border-radius:4px;">
+                      <div style="font-size:10px;font-weight:600;color:#991b1b;">${s.road_name || s.road_id}</div>
+                      <div style="font-size:9px;color:#b91c1c;">${s.override_reason || 'Blocked'}</div>
+                      <div style="font-size:9px;color:#dc2626;">Reported by: ${s.override_actor || 'Unknown'}</div>
+                    </div>`
+                  ).join('')
+                : '';
+              return [
+                /* Casing layer — dark underline for contrast against basemap */
+                <GeoJSON
+                  key="route-casing"
+                  data={{
+                    type: "FeatureCollection",
+                    features: [{ type: "Feature", geometry: { type: "LineString", coordinates: route.geometry } }],
+                  }}
+                  style={{
+                    color: MAP_STYLES.routeCasing.color,
+                    weight: casingWeight,
+                    opacity: 0.9,
+                    dashArray: casingDash,
+                  }}
+                />,
+                /* Main route layer */
+                <GeoJSON
+                  key="route"
+                  data={{
+                    type: "FeatureCollection",
+                    features: [
+                      {
+                        type: "Feature",
+                        properties: {
+                          distance: route.distance_km,
+                          duration: route.duration_minutes,
+                          source: route.source,
+                          crossesFlood: route.crosses_flood_zone,
+                          crossesBlocked: route.crosses_overridden_road,
+                          routeValid: route.route_valid,
+                          requiresReroute: route.requires_reroute,
+                          routeValidReason: route.route_valid_reason,
+                          blockedSegments: route.blocked_segments,
+                          floodWarning: route.flood_warning,
+                        },
+                        geometry: {
+                          type: "LineString",
+                          coordinates: route.geometry,
+                        },
+                      },
+                    ],
+                  }}
+                  style={{
+                    color: routeStyle.color,
+                    weight: routeStyle.width,
+                    opacity: 0.85,
+                    dashArray: routeStyle.dash ? routeStyle.dash.join(', ') : null,
+                  }}
+                  onEachFeature={(feature, layer) => {
+                    const props = feature.properties;
+                    const safetySection = !props.routeValid
+                      ? `<div style="margin-top:6px;padding:6px 8px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;">
+                          <div style="font-size:11px;font-weight:700;color:#991b1b;margin-bottom:3px;">⛔ ROUTE UNSAFE</div>
+                          <div style="font-size:10px;color:#b91c1c;">${props.routeValidReason || 'Route crosses blocked segments'}</div>
+                          ${props.blockedSegments?.length ? '<div style="font-size:9px;color:#dc2626;margin-top:3px;font-weight:600;">Blocked:</div>' + blockedSegmentHtml : ''}
+                        </div>`
+                      : props.crossesBlocked
+                      ? `<div style="margin-top:6px;padding:6px 8px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;">
+                          <div style="font-size:11px;font-weight:700;color:#991b1b;margin-bottom:3px;">⛔ CONFIRMED HAZARD</div>
+                          <div style="font-size:10px;color:#b91c1c;">${props.routeValidReason || 'Route crosses an overridden-blocked road'}</div>
+                          ${blockedSegmentHtml}
+                        </div>`
+                      : props.crossesFlood
+                      ? `<div style="font-size:10px;color:#d97706;margin-top:4px;font-weight:600;">⚠ ${props.floodWarning || 'Route crosses flood zone'}</div>`
+                      : '';
+                    layer.bindPopup(
+                      `<div style="padding: 8px; min-width: 180px;">
+                        <div style="font-size: 12px; font-weight: 600; color: #1e293b; margin-bottom: 4px;">
+                          Route Information
+                        </div>
+                        <div style="font-size: 11px; color: #64748b; margin-bottom: 2px;">
+                          Distance: ${props.distance?.toFixed(1)} km
+                        </div>
+                        <div style="font-size: 11px; color: #64748b; margin-bottom: 2px;">
+                          Duration: ~${Math.round(props.duration)} minutes
+                        </div>
+                        <div style="font-size: 10px; color: #94a3b8; margin-top: 4px;">
+                          ${props.source}
+                        </div>
+                        ${safetySection}
+                      </div>`
+                    );
+                  }}
+                />,
+              ];
+            })()}
 
           {visibleLayers.priority && assessment?.coordinates?.lat && (
             <Marker
@@ -516,52 +560,84 @@ export default function SituationMap({ assessment, loading, route }) {
       </div>
 
       {/* Route info panel */}
-      {route && (
-        <div className="absolute bottom-3 left-3 z-[1000] bg-white/95 backdrop-blur-sm rounded-lg border border-stone-200 shadow-sm p-3 max-w-[280px]">
-          <div className="flex items-center gap-2 mb-2">
-            <div
-              className="w-2 h-2 rounded-full"
-              style={{
-                backgroundColor: route.crosses_flood_zone
-                  ? "#d97706"
-                  : route.status === "success"
-                    ? "#2563eb"
-                    : "#9ca3af",
-              }}
-            />
-            <span className="text-[11px] font-semibold text-stone-700">
-              {route.crosses_flood_zone
-                ? "⚠ Route Crosses Flood Zone"
-                : route.status === "success"
-                  ? "Real Road Route"
-                  : "Straight-line Approximation"}
-            </span>
-          </div>
-          <div className="space-y-1">
-            <div className="flex justify-between text-[11px]">
-              <span className="text-stone-500">Distance:</span>
-              <span className="font-medium text-stone-700">{route.distance_km?.toFixed(1)} km</span>
+      {route && (() => {
+        const routeKey = getRouteStyleKey(route);
+        const routeColor = MAP_STYLES.route[routeKey]?.color || MAP_STYLES.route.normal.color;
+        const isUnsafe = route.route_valid === false || route.crosses_overridden_road;
+        return (
+          <div className="absolute bottom-3 left-3 z-[1000] bg-white/95 backdrop-blur-sm rounded-lg border border-stone-200 shadow-sm p-3 max-w-[300px]">
+            {/* Status indicator */}
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: routeColor }} />
+              <span className="text-[11px] font-semibold text-stone-700">
+                {route.crosses_overridden_road
+                  ? "⛔ Route Crosses Blocked Road"
+                  : route.crosses_flood_zone
+                    ? "⚠ Route Crosses Flood Zone"
+                    : route.status === "success"
+                      ? "Real Road Route"
+                      : "Straight-line Approximation"}
+              </span>
             </div>
-            <div className="flex justify-between text-[11px]">
-              <span className="text-stone-500">Duration:</span>
-              <span className="font-medium text-stone-700">~{Math.round(route.duration_minutes)} min</span>
-            </div>
-            <div className="text-[10px] text-stone-400 mt-1">
-              {route.distance_method}
-            </div>
-            {route.crosses_flood_zone && (
-              <div className="mt-2 px-2 py-1.5 rounded bg-amber-50 border border-amber-200/60">
-                <div className="text-[10px] font-semibold text-amber-700">
-                  ⚠ Route crosses {route.intersecting_polygons?.length || 0} flood zone(s)
-                </div>
-                <div className="text-[10px] text-amber-600 mt-0.5">
-                  Automatic avoidance not available. Coordinator should consider an alternative route.
-                </div>
+
+            {/* Metrics */}
+            <div className="space-y-1">
+              <div className="flex justify-between text-[11px]">
+                <span className="text-stone-500">Distance:</span>
+                <span className="font-medium text-stone-700">{route.distance_km?.toFixed(1)} km</span>
               </div>
-            )}
+              <div className="flex justify-between text-[11px]">
+                <span className="text-stone-500">Duration:</span>
+                <span className="font-medium text-stone-700">~{Math.round(route.duration_minutes)} min</span>
+              </div>
+              <div className="text-[10px] text-stone-400 mt-1">
+                {route.distance_method}
+              </div>
+
+              {/* Route validity warning — shown immediately when unsafe, not behind a click */}
+              {isUnsafe && (
+                <div className="mt-2 px-2 py-1.5 rounded bg-red-50 border border-red-200/60">
+                  <div className="text-[10px] font-bold text-red-700">
+                    ⛔ ROUTE NOT SAFE TO EXECUTE
+                  </div>
+                  <div className="text-[10px] text-red-600 mt-0.5">
+                    {route.route_valid_reason || "Route crosses blocked segments."}
+                  </div>
+                  {route.blocked_segments?.length > 0 && (
+                    <div className="mt-1.5 space-y-1">
+                      {route.blocked_segments.map((seg, i) => (
+                        <div key={i} className="px-1.5 py-1 rounded bg-white/60 border border-red-100">
+                          <div className="text-[9px] font-bold text-red-800">
+                            {seg.road_name || seg.road_id}
+                          </div>
+                          <div className="text-[9px] text-red-600">
+                            {seg.override_reason || "Blocked"}
+                          </div>
+                          <div className="text-[9px] text-red-500">
+                            Reported by: {seg.override_actor || "Unknown"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Flood zone warning — only when no override blockage (avoids stacking) */}
+              {!route.crosses_overridden_road && route.crosses_flood_zone && (
+                <div className="mt-2 px-2 py-1.5 rounded bg-amber-50 border border-amber-200/60">
+                  <div className="text-[10px] font-semibold text-amber-700">
+                    ⚠ Route crosses {route.intersecting_polygons?.length || 0} flood zone(s)
+                  </div>
+                  <div className="text-[10px] text-amber-600 mt-0.5">
+                    Automatic avoidance not available. Coordinator should consider an alternative route.
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Override modal */}
       {overrideModal && (
