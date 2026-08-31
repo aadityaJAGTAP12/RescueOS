@@ -375,6 +375,24 @@ def get_route(
         if warnings:
             result["message"] += " WARNING: " + "; ".join(warnings) + "."
 
+        # HONEST LABELING: When the route crosses a blocked segment, flag it
+        # so downstream consumers know this route is NOT safe to execute.
+        # OSRM does not support per-segment exclusion — this route was computed
+        # without awareness of the blockage and MUST be treated as invalid.
+        if override_check["crosses_overridden_road"]:
+            result["route_valid"] = False
+            result["requires_reroute"] = True
+            result["route_valid_reason"] = (
+                f"Route crosses {len(override_check['blocked_segments'])} blocked "
+                f"road/bridge segment(s). OSRM cannot exclude specific road segments "
+                f"at query time. This route is NOT safe to execute. A coordinator must "
+                f"manually verify on-the-ground conditions and determine an alternative."
+            )
+        else:
+            result["route_valid"] = True
+            result["requires_reroute"] = False
+            result["route_valid_reason"] = None
+
         return result
         
     except requests.RequestException as e:
@@ -441,6 +459,20 @@ def _fallback_to_haversine(
         warnings.append(f"Route crosses blocked road/bridge: {', '.join(blocked_names)}")
     if warnings:
         result["message"] += " WARNING: " + "; ".join(warnings) + "."
+
+    # HONEST LABELING: same as OSRM path
+    if override_check["crosses_overridden_road"]:
+        result["route_valid"] = False
+        result["requires_reroute"] = True
+        result["route_valid_reason"] = (
+            f"Route crosses {len(override_check['blocked_segments'])} blocked "
+            f"road/bridge segment(s). This straight-line approximation is NOT safe "
+            f"to execute. A coordinator must manually verify conditions."
+        )
+    else:
+        result["route_valid"] = True
+        result["requires_reroute"] = False
+        result["route_valid_reason"] = None
 
     return result
 

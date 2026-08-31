@@ -131,6 +131,8 @@ class TestOverrideRoutingChain:
             end_lon=94.22,
         )
         assert route_before.get("crosses_overridden_road", False) is False
+        assert route_before.get("route_valid") is True
+        assert route_before.get("requires_reroute") is False
 
         # Apply override marking the main road as blocked
         apply_override(
@@ -157,6 +159,12 @@ class TestOverrideRoutingChain:
         assert blocked[0]["override_status"] == "blocked"
         assert "blocked" in (route_after.get("override_warning") or "").lower()
 
+        # CRITICAL: Honest labeling — route is NOT valid
+        assert route_after.get("route_valid") is False
+        assert route_after.get("requires_reroute") is True
+        assert route_after.get("route_valid_reason") is not None
+        assert "blocked" in route_after["route_valid_reason"].lower()
+
     def test_route_after_removing_override_returns_to_normal(self, setup_roads):
         """After removing the override, route returns to normal (no blockage warning)."""
         from agent.tools.routing_tool import get_route
@@ -177,6 +185,8 @@ class TestOverrideRoutingChain:
             end_lon=94.22,
         )
         assert route_blocked.get("crosses_overridden_road") is True
+        assert route_blocked.get("route_valid") is False
+        assert route_blocked.get("requires_reroute") is True
 
         # Remove the override
         clear_overrides()
@@ -190,6 +200,8 @@ class TestOverrideRoutingChain:
         )
         assert route_clear.get("crosses_overridden_road") is False
         assert route_clear.get("blocked_segments", []) == []
+        assert route_clear.get("route_valid") is True
+        assert route_clear.get("requires_reroute") is False
 
     def test_override_on_bridge_detected(self, setup_roads):
         """Override on a bridge is also detected by the routing tool."""
@@ -239,6 +251,8 @@ class TestOverrideRoutingChain:
         # Route should NOT report blockage (Gymkhana Road is far from the route)
         assert route.get("crosses_overridden_road") is False
         assert route.get("blocked_segments", []) == []
+        assert route.get("route_valid") is True
+        assert route.get("requires_reroute") is False
 
     def test_override_preserves_original_routing_behavior(self, setup_roads):
         """When no override is active, routing behavior is unchanged."""
