@@ -1,5 +1,4 @@
-"""
-OSRM Routing Tool
+"""OSRM Routing Tool
 
 Provides real road-network routing via OSRM backend, with graceful
 fallback to straight-line (haversine) distance when OSRM is unavailable.
@@ -12,6 +11,12 @@ Phase 2: Flood-aware routing — detects whether a route passes through
 or near any flood polygon. Returns warning information alongside every
 route. OSRM does NOT support per-query polygon avoidance, so this is
 DETECTION + WARNING only (not automatic avoidance).
+
+Phase 7D+: Override-aware routing — detects whether a route passes
+through or near any road/bridge with an active operational override
+(blocked, submerged, damaged). Reports override status alongside every
+route. When a blocked road/bridge is detected on the route, the result
+explicitly marks the route as compromised.
 """
 
 import os
@@ -27,6 +32,137 @@ from agent.data_loader import haversine_km, FLOOD_POLYGONS, get_flood_polygons
 # OSRM configuration
 OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "http://localhost:5001")
 OSRM_TIMEOUT_SECONDS = 10  # Reasonable timeout for routing requests
+
+# Override statuses that indicate a road/bridge is unusable
+_BLOCKED_STATUSES = {"blocked", "submerged", "damaged", "closed"}
+
+
+def check_route_override_status(route_geometry: list, district_id: str = None) -> dict:
+    """
+    Check if a route passes through or near any road/bridge with an active
+    operational override marking it as unusable.
+
+    This is the Phase 7D+ override → routing integration. It queries the
+    repository for roads with active overrides and checks if the route
+    geometry intersects with any of them.
+
+    Args:
+        route_geometry: List of [lon, lat] coordinate pairs from the route.
+        district_id: optional district to scope road search
+
+    Returns:
+        {
+            "crosses_overridden_road": bool,
+            "blocked_segments": [
+                {
+                    "road_id": str,
+                    "road_name": str,
+                    "override_status": str,
+                    "override_reason": str,
+                    "override_actor": str,
+                }
+            ],
+            "warning": str or None,
+        }
+    """
+    if not route_geometry or len(route_geometry) < 2:
+        return {
+            "crosses_overridden_road": False,
+            "blocked_segments": [],
+            "warning": None,
+        }
+
+    try:
+        from agent.data.repository import get_repository
+        from agent.overrides import get_all_overrides
+        from shapely.geometry import LineString, shape
+        from shapely.strtree import STRtree
+
+        repo = get_repository()
+
+        # Get all active overrides for roads
+        all_overrides = get_all_overrides()
+        override_map = {}
+        for o in all_overrides:
+            if o.get("active", True) and o.get("target_type") == "road":
+                status = o.get("override_status", "")
+                if status in _BLOCKED_STATUSES:
+                    override_map[o["target_id"]] = o
+
+        if not override_map:
+            return {
+                "crosses_overridden_road": False,
+                "blocked_segments": [],
+                "warning": None,
+            }
+
+        # Load roads from the repository
+        if district_id:
+            roads = repo.get_roads(district_id)
+        else:
+            # Try to load roads from all districts
+            districts = repo.list_districts()
+            roads = []
+            for d in districts:
+                roads.extend(repo.get_roads(d.id))
+
+        # Check each road with an override
+        route_line = LineString(route_geometry)
+        blocked_segments = []
+
+        for road in roads:
+            # Check if this road has a blocking override
+            override = override_map.get(road.name) or override_map.get(road.id)
+            if not override:
+                continue
+
+            # Check if road has geometry
+            if not road.geometry_coords or len(road.geometry_coords) < 2:
+                continue
+
+            try:
+                road_line = LineString(road.geometry_coords)
+            except Exception:
+                continue
+
+            # Check if route intersects with this road
+            # Use a buffer around the route to catch near-misses
+            # (OSRM routes may not exactly overlap road geometries)
+            route_buffer = route_line.buffer(0.005)  # ~500m buffer
+
+            if route_buffer.intersects(road_line):
+                blocked_segments.append({
+                    "road_id": road.id,
+                    "road_name": road.name or "Unnamed road",
+                    "override_status": override["override_status"],
+                    "override_reason": override.get("reason", ""),
+                    "override_actor": override.get("actor", ""),
+                })
+
+        crosses = len(blocked_segments) > 0
+        warning = None
+        if crosses:
+            names = [s["road_name"] for s in blocked_segments]
+            warning = (
+                f"Route passes through {len(blocked_segments)} blocked road/bridge segment(s): "
+                f"{', '.join(names)}. "
+                f"This route may be impassable. Coordinator should verify on-the-ground "
+                f"conditions and consider alternative routes."
+            )
+
+        return {
+            "crosses_overridden_road": crosses,
+            "blocked_segments": blocked_segments,
+            "warning": warning,
+        }
+
+    except Exception as e:
+        # Graceful degradation — don't let override check break routing
+        return {
+            "crosses_overridden_road": False,
+            "blocked_segments": [],
+            "warning": None,
+        }
 
 # ---------------------------------------------------------------------------
 # Spatial index for flood-crossing detection (built once at module load)
@@ -209,7 +345,10 @@ def get_route(
         
         # Phase 2: Check for flood polygon intersections
         flood_check = check_route_flood_intersection(geometry)
-        
+
+        # Phase 7D+: Check for override-blocked road/bridge segments
+        override_check = check_route_override_status(geometry)
+
         result = {
             "status": "success",
             "distance_km": round(distance_km, 2),
@@ -221,11 +360,21 @@ def get_route(
             "crosses_flood_zone": flood_check["crosses_flood_zone"],
             "intersecting_polygons": flood_check["intersecting_polygons"],
             "flood_warning": flood_check["warning"],
+            "crosses_overridden_road": override_check["crosses_overridden_road"],
+            "blocked_segments": override_check["blocked_segments"],
+            "override_warning": override_check["warning"],
         }
-        
+
+        # Build combined warning message
+        warnings = []
         if flood_check["crosses_flood_zone"]:
-            result["message"] += f" WARNING: Route crosses {len(flood_check['intersecting_polygons'])} flood zone(s)."
-        
+            warnings.append(f"Route crosses {len(flood_check['intersecting_polygons'])} flood zone(s)")
+        if override_check["crosses_overridden_road"]:
+            blocked_names = [s["road_name"] for s in override_check["blocked_segments"]]
+            warnings.append(f"Route crosses blocked road/bridge: {', '.join(blocked_names)}")
+        if warnings:
+            result["message"] += " WARNING: " + "; ".join(warnings) + "."
+
         return result
         
     except requests.RequestException as e:
@@ -264,7 +413,10 @@ def _fallback_to_haversine(
     
     # Phase 2: Check even the fallback geometry for flood crossings
     flood_check = check_route_flood_intersection(geometry)
-    
+
+    # Phase 7D+: Check for override-blocked segments
+    override_check = check_route_override_status(geometry)
+
     result = {
         "status": "unavailable",
         "distance_km": round(distance_km, 2),
@@ -276,11 +428,20 @@ def _fallback_to_haversine(
         "crosses_flood_zone": flood_check["crosses_flood_zone"],
         "intersecting_polygons": flood_check["intersecting_polygons"],
         "flood_warning": flood_check["warning"],
+        "crosses_overridden_road": override_check["crosses_overridden_road"],
+        "blocked_segments": override_check["blocked_segments"],
+        "override_warning": override_check["warning"],
     }
-    
+
+    warnings = []
     if flood_check["crosses_flood_zone"]:
-        result["message"] += f" WARNING: Route crosses {len(flood_check['intersecting_polygons'])} flood zone(s)."
-    
+        warnings.append(f"Route crosses {len(flood_check['intersecting_polygons'])} flood zone(s)")
+    if override_check["crosses_overridden_road"]:
+        blocked_names = [s["road_name"] for s in override_check["blocked_segments"]]
+        warnings.append(f"Route crosses blocked road/bridge: {', '.join(blocked_names)}")
+    if warnings:
+        result["message"] += " WARNING: " + "; ".join(warnings) + "."
+
     return result
 
 
