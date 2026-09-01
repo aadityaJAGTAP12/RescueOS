@@ -392,6 +392,7 @@ export default function MapCanvas() {
   const {
     state,
     openPanel,
+    setFilter,
     fetchFieldReports,
   } = useWorkspace();
 
@@ -554,16 +555,14 @@ export default function MapCanvas() {
         <FilterChip
           label="All Urgency"
           active={!state.filters.urgency}
-          onClick={() => {
-            // This would need dispatch — for now just visual
-          }}
+          onClick={() => setFilter("urgency", null)}
         />
         {["critical", "high", "medium", "low"].map((u) => (
           <FilterChip
             key={u}
             label={u}
             active={state.filters.urgency === u}
-            onClick={() => {}}
+            onClick={() => setFilter("urgency", u)}
             color={
               u === "critical"
                 ? "#dc2626"

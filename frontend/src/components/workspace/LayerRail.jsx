@@ -9,23 +9,27 @@ import { useState } from "react";
 
 const LAYER_GROUPS = [
   {
-    label: "ENVIRONMENT",
+    label: "HAZARD",
     layers: [
       { id: "flood", label: "Flood", icon: Droplets, color: "#0891b2" },
+    ],
+  },
+  {
+    label: "INFRASTRUCTURE",
+    layers: [
       { id: "roads", label: "Roads", icon: Route, color: "#16a34a" },
       { id: "bridges", label: "Bridges", icon: Landmark, color: "#16a34a" },
-      { id: "settlements", label: "Settlements", icon: MapPin, color: "#78716c" },
       { id: "buildings", label: "Buildings", icon: Building2, color: "#a8a29e" },
       { id: "medical", label: "Medical", icon: Hospital, color: "#0891b2" },
     ],
   },
   {
-    label: "OPERATIONAL",
+    label: "RESPONSE",
     layers: [
       { id: "needs", label: "Needs", icon: AlertTriangle, color: "#dc2626" },
-      { id: "offers", label: "Offers", icon: Package, color: "#0d9488" },
-      { id: "operations", label: "Operations", icon: Zap, color: "#2563eb" },
       { id: "incidents", label: "Incidents", icon: Shield, color: "#d97706" },
+      { id: "operations", label: "Operations", icon: Zap, color: "#2563eb" },
+      { id: "offers", label: "Offers", icon: Package, color: "#0d9488" },
     ],
   },
   {
@@ -83,7 +87,7 @@ function LayerToggle({ layer, active, onToggle, count }) {
 }
 
 export default function LayerRail() {
-  const { state, toggleLayer, openPanel } = useWorkspace();
+  const { state, toggleLayer, openPanel, setFilter } = useWorkspace();
   const [collapsed, setCollapsed] = useState(false);
 
   // Compute entity counts
@@ -144,6 +148,72 @@ export default function LayerRail() {
         >
           <ChevronLeft className="w-3 h-3 text-[#6b7d93]" />
         </button>
+      </div>
+
+      {/* District Filter */}
+      <div className="p-2 border-b border-[#2a3a4e] space-y-2">
+        <div className="text-[9px] font-semibold text-[#4a5568] uppercase tracking-wider px-2 mb-1">
+          District
+        </div>
+        <select
+          value={state.filters.district || ""}
+          onChange={(e) => setFilter("district", e.target.value || null)}
+          className="w-full px-2 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[11px] text-[#c8d6e5] outline-none appearance-none cursor-pointer"
+        >
+          <option value="">All Districts</option>
+          {state.districts.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Filters */}
+      <div className="px-2 py-2 border-b border-[#2a3a4e] space-y-2">
+        <div className="text-[9px] font-semibold text-[#4a5568] uppercase tracking-wider px-1">
+          Urgency
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {['critical', 'high', 'medium', 'low'].map(u => (
+            <button
+              key={u}
+              onClick={() => setFilter('urgency', state.filters.urgency === u ? null : u)}
+              className={cn(
+                'px-1.5 py-0.5 rounded text-[9px] font-medium border transition-colors',
+                state.filters.urgency === u
+                  ? u === 'critical' ? 'bg-red-500/20 text-red-400 border-red-500/30'
+                    : u === 'high' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                    : u === 'medium' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                    : 'bg-green-500/20 text-green-400 border-green-500/30'
+                  : 'text-[#6b7d93] border-[#2a3a4e] hover:border-[#3a5a7e]'
+              )}
+            >
+              {u}
+            </button>
+          ))}
+        </div>
+        <div className="text-[9px] font-semibold text-[#4a5568] uppercase tracking-wider px-1">
+          Status
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {['OPEN', 'RESPONDING', 'RESOLVED'].map(s => (
+            <button
+              key={s}
+              onClick={() => setFilter('status', state.filters.status === s ? null : s)}
+              className={cn(
+                'px-1.5 py-0.5 rounded text-[9px] font-medium border transition-colors',
+                state.filters.status === s
+                  ? s === 'OPEN' ? 'bg-red-500/20 text-red-400 border-red-500/30'
+                    : s === 'RESPONDING' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                    : 'bg-green-500/20 text-green-400 border-green-500/30'
+                  : 'text-[#6b7d93] border-[#2a3a4e] hover:border-[#3a5a7e]'
+              )}
+            >
+              {s.toLowerCase()}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Layer groups */}

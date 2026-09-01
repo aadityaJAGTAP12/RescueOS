@@ -1573,6 +1573,70 @@ def api_planner():
 
 
 # ---------------------------------------------------------------------------
+# AI Coordinator endpoint (Phase 7B v1)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/ai-coordinator/analysis", methods=["GET"])
+def api_ai_coordinator_analysis():
+    """
+    Read-only AI Coordinator analysis endpoint.
+
+    Returns structured findings based on current operational state:
+    - Coordination gaps (uncovered needs)
+    - Duplicate responses (multiple orgs on same need)
+    - Consequence alerts (overrides affecting active operations)
+
+    This endpoint performs NO writes.
+    """
+    try:
+        from agent.ai_coordinator import run_coordinator_analysis
+        result = run_coordinator_analysis()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Delta Engine endpoint (Phase 7D)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/delta", methods=["GET"])
+def api_delta():
+    """
+    Compute and return the current delta — what changed in the operational state.
+    
+    Query parameters:
+        hours: lookback period in hours (default 24)
+    
+    This endpoint performs NO writes.
+    """
+    try:
+        from agent.delta import compute_delta
+        hours = float(request.args.get('hours', 24.0))
+        result = compute_delta(lookback_hours=hours)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/evidence/<entity_type>/<entity_id>", methods=["GET"])
+def api_evidence(entity_type, entity_id):
+    """
+    Synthesize evidence for a specific operational entity.
+    
+    Returns evidence items, uncertainty, data gaps, and confidence.
+    
+    This endpoint performs NO writes.
+    """
+    try:
+        from agent.delta import synthesize_evidence
+        result = synthesize_evidence(entity_type, entity_id)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

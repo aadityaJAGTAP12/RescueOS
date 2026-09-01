@@ -57,6 +57,21 @@ const initialState = {
   activity: [],
   notifications: [],
 
+  // AI Coordinator
+  aiAnalysis: null,
+  aiLoading: false,
+
+  // Delta / What Changed
+  delta: null,
+  deltaLoading: false,
+
+  // Selected entity (for map/panel sync)
+  selectedEntity: null,
+
+  // Search
+  searchQuery: "",
+  searchResults: [],
+
   // Loading states
   loading: {
     flood: false,
@@ -152,6 +167,27 @@ function workspaceReducer(state, action) {
 
     case "SET_NOTIFICATIONS":
       return { ...state, notifications: action.payload };
+
+    case "SET_AI_ANALYSIS":
+      return { ...state, aiAnalysis: action.payload, aiLoading: false };
+
+    case "SET_AI_LOADING":
+      return { ...state, aiLoading: action.payload };
+
+    case "SET_DELTA":
+      return { ...state, delta: action.payload, deltaLoading: false };
+
+    case "SET_DELTA_LOADING":
+      return { ...state, deltaLoading: action.payload };
+
+    case "SET_SELECTED_ENTITY":
+      return { ...state, selectedEntity: action.payload };
+
+    case "SET_SEARCH_QUERY":
+      return { ...state, searchQuery: action.payload };
+
+    case "SET_SEARCH_RESULTS":
+      return { ...state, searchResults: action.payload };
 
     case "SET_LOADING":
       return {
@@ -369,6 +405,99 @@ export function WorkspaceProvider({ children }) {
     }
   }, []);
 
+  const fetchDelta = useCallback(async (hours = 24) => {
+    dispatch({ type: "SET_DELTA_LOADING", payload: true });
+    try {
+      const resp = await fetch(`/api/delta?hours=${hours}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        dispatch({ type: "SET_DELTA", payload: data });
+      } else {
+        dispatch({ type: "SET_DELTA_LOADING", payload: false });
+      }
+    } catch (err) {
+      console.error("Failed to fetch delta:", err);
+      dispatch({ type: "SET_DELTA_LOADING", payload: false });
+    }
+  }, []);
+
+  const fetchAiAnalysis = useCallback(async () => {
+    dispatch({ type: "SET_AI_LOADING", payload: true });
+    try {
+      const resp = await fetch("/api/ai-coordinator/analysis");
+      if (resp.ok) {
+        const data = await resp.json();
+        dispatch({ type: "SET_AI_ANALYSIS", payload: data });
+      } else {
+        dispatch({ type: "SET_AI_LOADING", payload: false });
+      }
+    } catch (err) {
+      console.error("Failed to fetch AI analysis:", err);
+      dispatch({ type: "SET_AI_LOADING", payload: false });
+    }
+  }, []);
+
+  const setSelectedEntity = useCallback((entity) => {
+    dispatch({ type: "SET_SELECTED_ENTITY", payload: entity });
+  }, []);
+
+  const performSearch = useCallback((query) => {
+    dispatch({ type: "SET_SEARCH_QUERY", payload: query });
+    if (!query || query.length < 2) {
+      dispatch({ type: "SET_SEARCH_RESULTS", payload: [] });
+      return;
+    }
+    const q = query.toLowerCase();
+    const results = [];
+
+    // Search districts
+    state.districts.forEach((d) => {
+      if (d.name && d.name.toLowerCase().includes(q)) {
+        results.push({ type: "district", id: d.id, name: d.name, icon: "MapPin" });
+      }
+    });
+
+    // Search settlements
+    state.settlements.forEach((s) => {
+      if (s.name && s.name.toLowerCase().includes(q)) {
+        results.push({ type: "settlement", id: s.id, name: s.name, icon: "MapPin", lat: s.lat, lon: s.lon });
+      }
+    });
+
+    // Search needs
+    state.needs.forEach((n) => {
+      if ((n.title && n.title.toLowerCase().includes(q)) || (n.description && n.description.toLowerCase().includes(q))) {
+        results.push({ type: "need", id: n.id, name: n.title, icon: "AlertTriangle", lat: n.lat, lon: n.lon, data: n });
+      }
+    });
+
+    // Search operations
+    state.operations.forEach((o) => {
+      if (o.name && o.name.toLowerCase().includes(q)) {
+        results.push({ type: "operation", id: o.id, name: o.name, icon: "Zap", lat: o.lat, lon: o.lon, data: o });
+      }
+    });
+
+    // Search roads
+    state.roads.forEach((r) => {
+      if (r.name && r.name.toLowerCase().includes(q)) {
+        results.push({ type: "road", id: r.id, name: r.name, icon: "Route" });
+      }
+    });
+
+    // Search bridges
+    state.bridges.forEach((b) => {
+      if (b.name && b.name.toLowerCase().includes(q)) {
+        results.push({ type: "bridge", id: b.id, name: b.name, icon: "Landmark" });
+      }
+    });
+
+    // Search medical facilities
+    // (stored in overrides, but we can search settlements too)
+
+    dispatch({ type: "SET_SEARCH_RESULTS", payload: results.slice(0, 20) });
+  }, [state.districts, state.settlements, state.needs, state.operations, state.roads, state.bridges]);
+
   // --- Refresh all operational data ---
   const refreshAll = useCallback(async () => {
     const districtId = state.filters.district;
@@ -383,6 +512,8 @@ export function WorkspaceProvider({ children }) {
       fetchOverrides(),
       fetchActivity(),
       fetchNotifications(),
+      fetchAiAnalysis(),
+      fetchDelta(),
     ]);
   }, [
     state.filters,
@@ -396,6 +527,7 @@ export function WorkspaceProvider({ children }) {
     fetchOverrides,
     fetchActivity,
     fetchNotifications,
+    fetchAiAnalysis,
   ]);
 
   // --- Initial data load ---
@@ -411,6 +543,8 @@ export function WorkspaceProvider({ children }) {
       fetchOperations(state.filters);
       fetchActivity();
       fetchNotifications();
+      fetchAiAnalysis();
+      fetchDelta();
     }, 30000);
 
     return () => {
@@ -459,6 +593,8 @@ export function WorkspaceProvider({ children }) {
     openPanel,
     closePanel,
     setMapCenter,
+    setSelectedEntity,
+    performSearch,
     refreshAll,
     fetchFloodData,
     fetchRoads,
@@ -470,6 +606,8 @@ export function WorkspaceProvider({ children }) {
     fetchOverrides,
     fetchActivity,
     fetchNotifications,
+    fetchAiAnalysis,
+    fetchDelta,
   };
 
   return (

@@ -1,1 +1,178 @@
-[]
+[
+  {
+    "id": "c74c6a6b",
+    "target_type": "road",
+    "target_id": "Main Bridge Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Bridge collapsed",
+    "actor": "field_coordinator",
+    "timestamp": "2026-09-01T17:00:47.833530+00:00",
+    "active": true
+  },
+  {
+    "id": "ff72aa73",
+    "target_type": "road",
+    "target_id": "Blocked Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Flood",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:00:47.837560+00:00",
+    "active": true
+  },
+  {
+    "id": "0707a826",
+    "target_type": "road",
+    "target_id": "Uncertain Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Reported closure",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:00:47.849928+00:00",
+    "active": true
+  },
+  {
+    "id": "6ae7576a",
+    "target_type": "road",
+    "target_id": "Blocked Bridge",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Collapsed",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:00:47.874325+00:00",
+    "active": true
+  },
+  {
+    "id": "29532ec5",
+    "target_type": "road",
+    "target_id": "Main Bridge Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Bridge collapsed",
+    "actor": "field_coordinator",
+    "timestamp": "2026-09-01T17:27:29.186708+00:00",
+    "active": true
+  },
+  {
+    "id": "04673b06",
+    "target_type": "road",
+    "target_id": "Blocked Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Flood",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:27:29.197088+00:00",
+    "active": true
+  },
+  {
+    "id": "3b7a1429",
+    "target_type": "road",
+    "target_id": "Uncertain Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Reported closure",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:27:29.211489+00:00",
+    "active": true
+  },
+  {
+    "id": "8e309e67",
+    "target_type": "road",
+    "target_id": "Blocked Bridge",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Collapsed",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:27:29.233175+00:00",
+    "active": true
+  },
+  {
+    "id": "3d0d3160",
+    "target_type": "road",
+    "target_id": "Main Bridge Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Bridge collapsed",
+    "actor": "field_coordinator",
+    "timestamp": "2026-09-01T17:42:54.319595+00:00",
+    "active": true
+  },
+  {
+    "id": "8257423c",
+    "target_type": "road",
+    "target_id": "Blocked Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Flood",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:42:54.326392+00:00",
+    "active": true
+  },
+  {
+    "id": "1294780a",
+    "target_type": "road",
+    "target_id": "Uncertain Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Reported closure",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:42:54.352225+00:00",
+    "active": true
+  },
+  {
+    "id": "2f67ce34",
+    "target_type": "road",
+    "target_id": "Blocked Bridge",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Collapsed",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:42:54.390221+00:00",
+    "active": true
+  },
+  {
+    "id": "17cff1f1",
+    "target_type": "road",
+    "target_id": "Main Bridge Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Bridge collapsed",
+    "actor": "field_coordinator",
+    "timestamp": "2026-09-01T17:46:30.247981+00:00",
+    "active": true
+  },
+  {
+    "id": "deb1f817",
+    "target_type": "road",
+    "target_id": "Blocked Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Flood",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:46:30.261366+00:00",
+    "active": true
+  },
+  {
+    "id": "6113b695",
+    "target_type": "road",
+    "target_id": "Uncertain Road",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Reported closure",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:46:30.278827+00:00",
+    "active": true
+  },
+  {
+    "id": "d0af004f",
+    "target_type": "road",
+    "target_id": "Blocked Bridge",
+    "system_status": "unknown",
+    "override_status": "blocked",
+    "reason": "Collapsed",
+    "actor": "coordinator",
+    "timestamp": "2026-09-01T17:46:30.326978+00:00",
+    "active": true
+  }
+]

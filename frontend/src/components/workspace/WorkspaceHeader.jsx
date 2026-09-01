@@ -1,13 +1,96 @@
-import { useState } from "react";
-import { Shield, Bell, Search, ChevronDown, Radio, Brain } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  Shield, Bell, Search, ChevronDown, Radio, Brain,
+  X, MapPin, AlertTriangle, Zap, Route, Landmark, Clock,
+} from "lucide-react";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
 
+const SEARCH_ICONS = {
+  district: MapPin,
+  settlement: MapPin,
+  need: AlertTriangle,
+  operation: Zap,
+  road: Route,
+  bridge: Landmark,
+  facility: Shield,
+};
+
+const SEARCH_COLORS = {
+  district: "#6b7d93",
+  settlement: "#78716c",
+  need: "#dc2626",
+  operation: "#2563eb",
+  road: "#16a34a",
+  bridge: "#16a34a",
+  facility: "#0891b2",
+};
+
 export default function WorkspaceHeader({ onOpenAI }) {
-  const { state, setFilter } = useWorkspace();
+  const { state, setFilter, openPanel, setSelectedEntity, performSearch, setMapCenter, fetchDelta } = useWorkspace();
+  const [timeContext, setTimeContext] = useState('CURRENT');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchIdx, setSearchIdx] = useState(0);
+  const searchInputRef = useRef(null);
   const unreadCount = state.notifications.filter((n) => !n.read).length;
+
+  // Keyboard shortcut: Cmd/Ctrl + K to open search
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+      if (e.key === "Escape") {
+        setSearchOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // Focus input when search opens
+  useEffect(() => {
+    if (searchOpen && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [searchOpen]);
+
+  const handleSearchChange = useCallback((e) => {
+    const val = e.target.value;
+    setSearchQuery(val);
+    performSearch(val);
+    setSearchIdx(0);
+  }, [performSearch]);
+
+  const handleSearchSelect = useCallback((result) => {
+    // Focus map on the entity
+    if (result.lat && result.lon) {
+      setMapCenter([result.lat, result.lon]);
+    }
+    // Open the context panel
+    if (result.data) {
+      openPanel(result.type, result.id, result.data);
+    } else {
+      openPanel(result.type, result.id, { name: result.name, id: result.id });
+    }
+    setSearchOpen(false);
+    setSearchQuery("");
+  }, [openPanel, setMapCenter]);
+
+  const handleSearchKeyDown = useCallback((e) => {
+    const results = state.searchResults || [];
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSearchIdx((prev) => Math.min(prev + 1, results.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSearchIdx((prev) => Math.max(prev - 1, 0));
+    } else if (e.key === "Enter" && results[searchIdx]) {
+      handleSearchSelect(results[searchIdx]);
+    }
+  }, [state.searchResults, searchIdx, handleSearchSelect]);
 
   return (
     <header className="h-11 bg-[#0f1419] border-b border-[#2a3a4e] flex items-center px-3 gap-3 shrink-0 z-50">
@@ -42,10 +125,32 @@ export default function WorkspaceHeader({ onOpenAI }) {
       {/* Spacer */}
       <div className="flex-1" />
 
+      {/* Time context */}
+      <div className="flex items-center gap-1 px-1 py-0.5 rounded bg-[#1a2332] border border-[#2a3a4e]">
+        <Clock className="w-3 h-3 text-[#6b7d93] ml-1" />
+        {[{label: 'CURRENT', hours: 1}, {label: '24H', hours: 24}, {label: '7D', hours: 168}].map((t) => (
+          <button
+            key={t.label}
+            onClick={() => {
+              setTimeContext(t.label);
+              if (t.label !== 'CURRENT') fetchDelta(t.hours);
+            }}
+            className={cn(
+              "px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors",
+              timeContext === t.label
+                ? "bg-[#2a3a4e] text-[#c8d6e5]"
+                : "text-[#6b7d93] hover:text-[#c8d6e5]"
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {/* System status */}
       <div className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium">
         <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-        <span className="text-green-400 hidden sm:inline">System Active</span>
+        <span className="text-green-400 hidden sm:inline">Live</span>
       </div>
 
       {/* AI Coordinator */}
@@ -67,32 +172,78 @@ export default function WorkspaceHeader({ onOpenAI }) {
         )}
       </button>
 
-      {/* Search */}
+      {/* Search / Command palette */}
       <div className="relative">
         <button
           onClick={() => setSearchOpen(!searchOpen)}
-          className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[#1a2332] transition-colors"
+          className={cn(
+            "flex items-center gap-1.5 px-2 py-1 rounded transition-colors",
+            searchOpen ? "bg-[#1a2332] border border-[#2a3a4e]" : "hover:bg-[#1a2332]"
+          )}
         >
           <Search className="w-3.5 h-3.5 text-[#6b7d93]" />
           <span className="text-[11px] text-[#6b7d93] hidden md:inline">⌘K</span>
         </button>
+
         {searchOpen && (
-          <div className="absolute top-full right-0 mt-1 w-80 bg-[#1a2332] border border-[#2a3a4e] rounded-lg shadow-xl z-50 overflow-hidden">
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-[#2a3a4e]">
-              <Search className="w-3.5 h-3.5 text-[#6b7d93]" />
+          <div className="absolute top-full right-0 mt-1 w-96 bg-[#0f1419] border border-[#2a3a4e] rounded-lg shadow-2xl z-[9999] overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-[#2a3a4e]">
+              <Search className="w-4 h-4 text-[#4ea8de] shrink-0" />
               <input
+                ref={searchInputRef}
                 autoFocus
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") setSearchOpen(false);
-                }}
+                onChange={handleSearchChange}
+                onKeyDown={handleSearchKeyDown}
                 placeholder="Search needs, operations, locations..."
                 className="flex-1 bg-transparent text-[13px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
               />
+              <button
+                onClick={() => { setSearchOpen(false); setSearchQuery(""); }}
+                className="shrink-0 text-[#6b7d93] hover:text-[#c8d6e5] transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
-            <div className="p-3 text-[12px] text-[#6b7d93]">
-              Type to search across all operational data...
+            <div className="max-h-80 overflow-y-auto">
+              {(state.searchResults || []).length === 0 ? (
+                <div className="p-4 text-center text-[12px] text-[#4a5568]">
+                  {searchQuery.length < 2
+                    ? "Type to search across all operational data..."
+                    : "No results found"}
+                </div>
+              ) : (
+                <div className="py-1">
+                  {state.searchResults.map((result, idx) => {
+                    const Icon = SEARCH_ICONS[result.type] || MapPin;
+                    const color = SEARCH_COLORS[result.type] || "#6b7d93";
+                    return (
+                      <button
+                        key={`${result.type}-${result.id}-${idx}`}
+                        onClick={() => handleSearchSelect(result)}
+                        onMouseEnter={() => setSearchIdx(idx)}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors",
+                          idx === searchIdx ? "bg-[#1a2332]" : "hover:bg-[#1a2332]/50"
+                        )}
+                      >
+                        <div
+                          className="w-6 h-6 rounded flex items-center justify-center shrink-0"
+                          style={{ backgroundColor: `${color}15` }}
+                        >
+                          <Icon className="w-3 h-3" style={{ color }} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[12px] text-[#c8d6e5] truncate font-medium">
+                            {result.name}
+                          </div>
+                          <div className="text-[10px] text-[#6b7d93] capitalize">{result.type}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}
