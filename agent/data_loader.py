@@ -86,12 +86,25 @@ def get_flood_data(district_id: str = None, observed_at: str = None) -> dict:
         if district_id is not None:
             snapshot = repo.get_latest_flood_snapshot(district_id, observed_at=observed_at)
             if snapshot and snapshot.geometry_geojson:
-                return snapshot.geometry_geojson
+                result = snapshot.geometry_geojson.copy()
+                # Tag every feature with district_id
+                if "features" in result:
+                    result["features"] = [
+                        {"type": f["type"], "geometry": f["geometry"],
+                         "properties": {**f.get("properties", {}), "district_id": district_id}}
+                        for f in result["features"]
+                    ]
+                return result
         else:
             features = []
             for snapshot in repo.list_flood_snapshots(observed_after=observed_at):
                 if snapshot.geometry_geojson:
-                    features.extend(snapshot.geometry_geojson.get("features", []))
+                    tagged = [
+                        {"type": f["type"], "geometry": f["geometry"],
+                         "properties": {**f.get("properties", {}), "district_id": snapshot.district_id}}
+                        for f in snapshot.geometry_geojson.get("features", [])
+                    ]
+                    features.extend(tagged)
             if features:
                 return {"type": "FeatureCollection", "features": features}
     except Exception:

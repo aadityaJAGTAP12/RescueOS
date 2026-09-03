@@ -419,8 +419,13 @@ export default function MapCanvas() {
     if (!map) return;
     const bounds = map.getBounds();
     const zoom = map.getZoom();
+    // For buildings, use the selected district; if ALL, use the first district
     const districtId = state.filters.district || (state.districts.length > 0 ? state.districts[0].id : null);
     if (!districtId) return;
+    // Only load buildings at zoom >= 13 to avoid massive loads
+    if (zoom < 13) {
+      return;
+    }
     const bbox = {
       west: bounds.getWest(),
       south: bounds.getSouth(),
@@ -430,9 +435,9 @@ export default function MapCanvas() {
     fetchBuildings(districtId, bbox, zoom);
   }, [state.layers.buildings, state.filters.district, state.districts, fetchBuildings]);
 
-  // Load buildings when layer is toggled on
+  // Load buildings when layer is toggled on (only at zoom >= 13)
   useEffect(() => {
-    if (state.layers.buildings && state.districts.length > 0) {
+    if (state.layers.buildings && state.districts.length > 0 && state.mapZoom >= 13) {
       handleMapMoveEnd();
     }
   }, [state.layers.buildings, state.districts.length]);
@@ -485,6 +490,12 @@ export default function MapCanvas() {
     if (state.filters.district) {
       filtered = filtered.filter((o) => o.district_id === state.filters.district);
     }
+    // Status filter for operations maps OPEN→PLANNING, RESPONDING→ACTIVE, RESOLVED→COMPLETED
+    if (state.filters.status) {
+      const statusMap = { OPEN: 'PLANNING', RESPONDING: 'ACTIVE', RESOLVED: 'COMPLETED' };
+      const targetStatus = statusMap[state.filters.status] || state.filters.status;
+      filtered = filtered.filter((o) => o.status === targetStatus);
+    }
     return filtered;
   }, [state.operations, state.filters]);
 
@@ -497,22 +508,31 @@ export default function MapCanvas() {
     return filtered.filter((o) => o.lat && o.lon);
   }, [state.offers, state.filters]);
 
-  // Filter field reports (use those with coordinates)
+  // Filter field reports by district (approximate geographic filter using settlements as reference)
   const visibleReports = useMemo(() => {
-    return state.fieldReports.filter((r) => r.lat && r.lon);
-  }, [state.fieldReports]);
+    let reports = state.fieldReports.filter((r) => r.lat && r.lon);
+    if (state.filters.district) {
+      // Filter reports that have coordinates near the selected district's settlements
+      const districtSettlements = state.settlements.filter(
+        (s) => s.district_id === state.filters.district
+      );
+      if (districtSettlements.length > 0) {
+        // Compute district bounding box from settlements
+        const lats = districtSettlements.map((s) => s.lat);
+        const lons = districtSettlements.map((s) => s.lon);
+        const minLat = Math.min(...lats) - 0.15;
+        const maxLat = Math.max(...lats) + 0.15;
+        const minLon = Math.min(...lons) - 0.15;
+        const maxLon = Math.max(...lons) + 0.15;
+        reports = reports.filter(
+          (r) => r.lat >= minLat && r.lat <= maxLat && r.lon >= minLon && r.lon <= maxLon
+        );
+      }
+    }
+    return reports;
+  }, [state.fieldReports, state.settlements, state.filters.district]);
 
-  // Flood style
-  const floodStyle = useMemo(
-    () => ({
-      fillColor: "#0891b2",
-      fillOpacity: 0.15,
-      color: "#0891b2",
-      weight: 1.5,
-      opacity: 0.5,
-    }),
-    []
-  );
+
 
   return (
     <div className="flex-1 relative">
@@ -533,11 +553,28 @@ export default function MapCanvas() {
         <MapMoveHandler onMoveEnd={handleMapMoveEnd} />
 
         {/* Flood layer (current / default) */}
-        {state.layers.flood && !state.layers.floodHistory && state.floodData && (
+        {state.layers.flood && !state.layers.floodHistory && state.floodData && state.floodData.features && state.floodData.features.length > 0 && (
           <GeoJSON
-            key="flood"
+            key={`flood-${state.filters.district || 'all'}`}
             data={state.floodData}
-            style={() => floodStyle}
+            style={(feature) => {
+              // Color by district for visual distinction in ALL view
+              const districtColors = {
+                sivasagar: { fill: '#0891b2', stroke: '#0891b2' },
+                jorhat: { fill: '#0284c7', stroke: '#0284c7' },
+                charaideo: { fill: '#6366f1', stroke: '#6366f1' },
+                golaghat: { fill: '#0d9488', stroke: '#0d9488' },
+              };
+              const did = feature?.properties?.district_id;
+              const colors = did && districtColors[did] ? districtColors[did] : { fill: '#0891b2', stroke: '#0891b2' };
+              return {
+                fillColor: colors.fill,
+                fillOpacity: 0.15,
+                color: colors.stroke,
+                weight: 1.5,
+                opacity: 0.5,
+              };
+            }}
           />
         )}
 
@@ -671,14 +708,13 @@ export default function MapCanvas() {
       {/* Map overlay: data status */}
       <div className="absolute bottom-2 left-2 z-[1000] flex items-center gap-2 px-2 py-1 bg-[#0f1419]/90 backdrop-blur-sm rounded border border-[#2a3a4e]">
         <div className="text-[10px] text-[#6b7d93]">
-          {state.roads.length} roads · {state.bridges.length} bridges · {state.medicalFacilities.length} medical · {state.settlements.length} settlements
+          {visibleSettlements.length} settlements · {visibleNeeds.length} needs · {visibleOperations.length} ops · {visibleOffers.length} offers
           {state.buildingsMeta && state.buildingsMeta.truncated && (
             <span className="text-[#4a5568]"> · {state.buildingsMeta.total_available} buildings (showing {state.buildingsMeta.returned})</span>
           )}
           {state.buildingsMeta && !state.buildingsMeta.truncated && (
             <span> · {state.buildingsMeta.total_available} buildings</span>
           )}
-          {" · "}{state.needs.length} needs · {state.operations.length} ops · {state.offers.length} offers
         </div>
       </div>
     </div>

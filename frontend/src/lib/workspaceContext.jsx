@@ -247,6 +247,7 @@ export function WorkspaceProvider({ children }) {
   const fetchFloodData = useCallback(async (districtId) => {
     dispatch({ type: "SET_LOADING", payload: { key: "flood", value: true } });
     try {
+      // Server endpoints: single district or ALL (server aggregates + tags district_id)
       const url = districtId
         ? `/api/districts/${districtId}/flood-geojson`
         : "/api/flood-geojson";
@@ -335,9 +336,12 @@ export function WorkspaceProvider({ children }) {
   const fetchBuildings = useCallback(async (districtId, bbox, zoom) => {
     dispatch({ type: "SET_LOADING", payload: { key: "buildings", value: true } });
     try {
-      let url = districtId
-        ? `/api/districts/${districtId}/buildings`
-        : `/api/districts/sivasagar/buildings`; // fallback
+      // Buildings require a specific district; use selected district or null (handled by caller)
+      if (!districtId) {
+        dispatch({ type: "SET_LOADING", payload: { key: "buildings", value: false } });
+        return;
+      }
+      let url = `/api/districts/${districtId}/buildings`;
       const params = new URLSearchParams();
       if (bbox) {
         params.set("west", bbox.west);

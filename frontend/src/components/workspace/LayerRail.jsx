@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 
 const LAYER_GROUPS = [
   {
@@ -130,20 +130,32 @@ function FloodHistorySelector() {
 }
 
 export default function LayerRail() {
-  const { state, toggleLayer, openPanel, setFilter } = useWorkspace();
+  const { state, toggleLayer, openPanel, setFilter, fetchAiAnalysis } = useWorkspace();
   const [collapsed, setCollapsed] = useState(false);
 
-  // Compute entity counts
+  // Handle AI Alerts toggle: if enabling, open the AI panel
+  const handleLayerToggle = useCallback((layerId) => {
+    if (layerId === 'aiAlerts' && !state.layers.aiAlerts) {
+      // Turn on and open AI panel
+      toggleLayer('aiAlerts');
+      openPanel('aiAnalysis');
+    } else {
+      toggleLayer(layerId);
+    }
+  }, [state.layers.aiAlerts, toggleLayer, openPanel]);
+
+  // Compute entity counts (respect district filter)
+  const districtFilter = state.filters.district;
   const counts = {
-    roads: state.roads.length,
-    bridges: state.bridges.length,
-    settlements: state.settlements.length,
+    roads: districtFilter ? state.roads.filter(r => r.district_id === districtFilter).length : state.roads.length,
+    bridges: districtFilter ? state.bridges.filter(b => b.district_id === districtFilter).length : state.bridges.length,
+    settlements: districtFilter ? state.settlements.filter(s => s.district_id === districtFilter).length : state.settlements.length,
     buildings: state.buildingsMeta?.total_available ?? state.buildings.length,
-    medical: state.medicalFacilities.length,
+    medical: districtFilter ? state.medicalFacilities.filter(f => f.district_id === districtFilter).length : state.medicalFacilities.length,
     organizations: state.organizations.length,
-    needs: state.needs.length,
-    offers: state.offers.length,
-    operations: state.operations.length,
+    needs: districtFilter ? state.needs.filter(n => n.district_id === districtFilter).length : state.needs.length,
+    offers: districtFilter ? state.offers.filter(o => o.district_id === districtFilter).length : state.offers.length,
+    operations: districtFilter ? state.operations.filter(o => o.district_id === districtFilter).length : state.operations.length,
     incidents: state.incidents.length,
     fieldReports: state.fieldReports.length,
     floodHistory: state.floodSnapshots.length,
@@ -278,7 +290,7 @@ export default function LayerRail() {
                   key={layer.id}
                   layer={layer}
                   active={state.layers[layer.id]}
-                  onToggle={toggleLayer}
+                  onToggle={handleLayerToggle}
                   count={counts[layer.id]}
                 />
               ))}
