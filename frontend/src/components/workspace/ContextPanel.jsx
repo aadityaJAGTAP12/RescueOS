@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import {
   X, ArrowLeft, AlertTriangle, Package, Zap, FileText, Shield,
   Stethoscope, MapPin, Clock, Users, ChevronDown, Route,
-  CheckCircle, Search, Handshake, Info, AlertCircle, HelpCircle,
+  CheckCircle, Search, Handshake, Info, AlertCircle, HelpCircle, Globe,
+  Building2, Brain, Inbox, EyeOff,
 } from "lucide-react";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
@@ -156,14 +157,24 @@ function EvidenceSection({ evidence, uncertainty, dataGaps, confidence }) {
 // -------------------------------------------------------------------
 
 function NeedDetail({ data, onClose, onOpenMatch }) {
-  const { state } = useWorkspace();
+  const { state, refreshAll, fetchNeeds, fetchActivity } = useWorkspace();
   const [need, setNeed] = useState(data);
   const [updating, setUpdating] = useState(false);
   const [matches, setMatches] = useState(null);
   const [loadingMatches, setLoadingMatches] = useState(false);
+  const [needEvidence, setNeedEvidence] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetch(`/api/evidence/need/${need.id}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => setNeedEvidence(data))
+      .catch(() => {});
+  }, [need.id]);
 
   const handleStatusChange = async (newStatus) => {
     setUpdating(true);
+    setError(null);
     try {
       const resp = await fetch(`/api/needs/${need.id}`, {
         method: "PATCH",
@@ -173,9 +184,15 @@ function NeedDetail({ data, onClose, onOpenMatch }) {
       if (resp.ok) {
         const result = await resp.json();
         setNeed(result.need);
+        // Refresh global workspace state so lists/activity reflect the change
+        refreshAll();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to update need (${resp.status})`);
       }
     } catch (err) {
       console.error("Failed to update need:", err);
+      setError("Network error: could not reach server");
     } finally {
       setUpdating(false);
     }
@@ -211,6 +228,8 @@ function NeedDetail({ data, onClose, onOpenMatch }) {
       });
       if (resp.ok) {
         const result = await resp.json();
+        // Refresh global state so operations list updates
+        refreshAll();
         // Open the newly created collaboration operation
         if (result.operation) {
           onOpenMatch("operation", result.operation.id, result.operation);
@@ -415,6 +434,12 @@ function NeedDetail({ data, onClose, onOpenMatch }) {
           <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
             Coordination
           </div>
+          {/* Error display */}
+          {error && (
+            <div className="px-2.5 py-2 rounded bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">
+              {error}
+            </div>
+          )}
           <div className="flex flex-wrap gap-1.5">
             {need.status === "OPEN" && (
               <button
@@ -442,6 +467,15 @@ function NeedDetail({ data, onClose, onOpenMatch }) {
                 className="px-2.5 py-1.5 rounded text-[11px] font-medium bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors"
               >
                 Mark Resolved
+              </button>
+            )}
+            {(need.status === "RESOLVED" || need.status === "CLOSED") && (
+              <button
+                onClick={() => handleStatusChange("OPEN")}
+                disabled={updating}
+                className="px-2.5 py-1.5 rounded text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-colors"
+              >
+                Reopen
               </button>
             )}
             {need.status !== "CLOSED" && need.status !== "RESOLVED" && (
@@ -522,23 +556,12 @@ function NeedDetail({ data, onClose, onOpenMatch }) {
         )}
 
         {/* EVIDENCE SECTION */}
-        {(() => {
-          // Fetch evidence for this need
-          const [evidence, setEvidence] = useState(null);
-          useEffect(() => {
-            fetch(`/api/evidence/need/${need.id}`)
-              .then(r => r.ok ? r.json() : null)
-              .then(data => setEvidence(data))
-              .catch(() => {});
-          }, [need.id]);
-          if (!evidence) return null;
-          return (
-            <EvidenceSection
-              evidence={evidence}
-              confidence={evidence.confidence}
-            />
-          );
-        })()}
+        {needEvidence && (
+          <EvidenceSection
+            evidence={needEvidence}
+            confidence={needEvidence.confidence}
+          />
+        )}
 
         {/* ACTIVITY TIMELINE (GitHub-like) */}
         {history.length > 0 && (
@@ -553,10 +576,13 @@ function NeedDetail({ data, onClose, onOpenMatch }) {
                 const eventColor = {
                   need_created: '#dc2626',
                   need_resolved: '#16a34a',
+                  need_reopened: '#d97706',
+                  need_accepted: '#2563eb',
                   match_confirmed: '#16a34a',
                   operation_created: '#2563eb',
                   resource_offered: '#0d9488',
                   status_changed: '#d97706',
+                  need_updated: '#d97706',
                   field_update: '#4f46e5',
                 }[event.event_type] || '#6b7d93';
                 return (
@@ -598,12 +624,22 @@ function NeedDetail({ data, onClose, onOpenMatch }) {
 // -------------------------------------------------------------------
 
 function OperationDetail({ data, onClose, onOpenNeed }) {
-  const { state } = useWorkspace();
+  const { state, refreshAll } = useWorkspace();
   const [operation, setOperation] = useState(data);
   const [updating, setUpdating] = useState(false);
+  const [opEvidence, setOpEvidence] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetch(`/api/evidence/operation/${operation.id}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => setOpEvidence(data))
+      .catch(() => {});
+  }, [operation.id]);
 
   const handleStatusChange = async (newStatus) => {
     setUpdating(true);
+    setError(null);
     try {
       const resp = await fetch(`/api/operations/${operation.id}`, {
         method: "PATCH",
@@ -613,9 +649,15 @@ function OperationDetail({ data, onClose, onOpenNeed }) {
       if (resp.ok) {
         const result = await resp.json();
         setOperation(result.operation);
+        // Refresh global workspace state
+        refreshAll();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to update operation (${resp.status})`);
       }
     } catch (err) {
       console.error("Failed to update operation:", err);
+      setError("Network error: could not reach server");
     } finally {
       setUpdating(false);
     }
@@ -726,6 +768,12 @@ function OperationDetail({ data, onClose, onOpenNeed }) {
           <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
             Actions
           </div>
+          {/* Error display */}
+          {error && (
+            <div className="px-2.5 py-2 rounded bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">
+              {error}
+            </div>
+          )}
           <div className="flex flex-wrap gap-1.5">
             {operation.status === "PLANNING" && (
               <button
@@ -758,22 +806,12 @@ function OperationDetail({ data, onClose, onOpenNeed }) {
         </div>
 
         {/* EVIDENCE SECTION */}
-        {(() => {
-          const [evidence, setEvidence] = useState(null);
-          useEffect(() => {
-            fetch(`/api/evidence/operation/${operation.id}`)
-              .then(r => r.ok ? r.json() : null)
-              .then(data => setEvidence(data))
-              .catch(() => {});
-          }, [operation.id]);
-          if (!evidence) return null;
-          return (
-            <EvidenceSection
-              evidence={evidence}
-              confidence={evidence.confidence}
-            />
-          );
-        })()}
+        {opEvidence && (
+          <EvidenceSection
+            evidence={opEvidence}
+            confidence={opEvidence.confidence}
+          />
+        )}
 
         {/* SECTION 5: ACTIVITY */}
         {history.length > 0 && (
@@ -786,6 +824,9 @@ function OperationDetail({ data, onClose, onOpenNeed }) {
               {history.slice(0, 10).map((event, i) => {
                 const eventColor = {
                   operation_created: '#2563eb',
+                  operation_activated: '#16a34a',
+                  operation_resolved: '#16a34a',
+                  operation_cancelled: '#9ca3af',
                   match_confirmed: '#16a34a',
                   status_changed: '#d97706',
                   field_update: '#4f46e5',
@@ -982,13 +1023,16 @@ function ReportDetail({ data, onClose }) {
 // -------------------------------------------------------------------
 
 function FacilityDetail({ data, override, onClose }) {
+  const { refreshAll } = useWorkspace();
   const [showOverride, setShowOverride] = useState(false);
   const [overrideStatus, setOverrideStatus] = useState("submerged");
   const [overrideReason, setOverrideReason] = useState("");
+  const [error, setError] = useState(null);
 
   const handleApplyOverride = async () => {
+    setError(null);
     try {
-      await fetch("/api/override", {
+      const resp = await fetch("/api/override", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -998,9 +1042,16 @@ function FacilityDetail({ data, override, onClose }) {
           reason: overrideReason,
         }),
       });
-      onClose();
+      if (resp.ok) {
+        refreshAll();
+        onClose();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to apply override (${resp.status})`);
+      }
     } catch (err) {
       console.error("Override failed:", err);
+      setError("Network error: could not reach server");
     }
   };
 
@@ -1093,7 +1144,7 @@ function FacilityDetail({ data, override, onClose }) {
 // -------------------------------------------------------------------
 
 function CreateNeedForm({ onClose }) {
-  const { fetchNeeds } = useWorkspace();
+  const { refreshAll } = useWorkspace();
   const [form, setForm] = useState({
     need_type: "food",
     title: "",
@@ -1105,10 +1156,12 @@ function CreateNeedForm({ onClose }) {
     requested_resources: [],
   });
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
+    setError(null);
     try {
       const resp = await fetch("/api/needs", {
         method: "POST",
@@ -1120,11 +1173,15 @@ function CreateNeedForm({ onClose }) {
         }),
       });
       if (resp.ok) {
-        fetchNeeds();
+        refreshAll();
         onClose();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to create need (${resp.status})`);
       }
     } catch (err) {
       console.error("Failed to create need:", err);
+      setError("Network error: could not reach server");
     } finally {
       setSubmitting(false);
     }
@@ -1223,6 +1280,12 @@ function CreateNeedForm({ onClose }) {
           </Field>
         </div>
 
+        {/* Error display */}
+        {error && (
+          <div className="px-2.5 py-2 rounded bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">
+            {error}
+          </div>
+        )}
         <button
           type="submit"
           disabled={submitting || !form.title.trim()}
@@ -1245,17 +1308,19 @@ function CreateNeedForm({ onClose }) {
 // -------------------------------------------------------------------
 
 function CreateReportForm({ defaultData, onClose }) {
-  const { fetchFieldReports } = useWorkspace();
+  const { refreshAll } = useWorkspace();
   const [form, setForm] = useState({
     raw_text: "",
     lat: defaultData?.lat || "",
     lon: defaultData?.lon || "",
   });
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
+    setError(null);
     try {
       const resp = await fetch("/api/field-intelligence", {
         method: "POST",
@@ -1263,11 +1328,15 @@ function CreateReportForm({ defaultData, onClose }) {
         body: JSON.stringify({ raw_text: form.raw_text }),
       });
       if (resp.ok) {
-        fetchFieldReports();
+        refreshAll();
         onClose();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to submit report (${resp.status})`);
       }
     } catch (err) {
       console.error("Failed to submit report:", err);
+      setError("Network error: could not reach server");
     } finally {
       setSubmitting(false);
     }
@@ -1299,6 +1368,12 @@ function CreateReportForm({ defaultData, onClose }) {
           </div>
         )}
 
+        {/* Error display */}
+        {error && (
+          <div className="px-2.5 py-2 rounded bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">
+            {error}
+          </div>
+        )}
         <button
           type="submit"
           disabled={submitting || !form.raw_text.trim()}
@@ -1321,7 +1396,7 @@ function CreateReportForm({ defaultData, onClose }) {
 // -------------------------------------------------------------------
 
 function CreateOfferForm({ onClose }) {
-  const { fetchOffers } = useWorkspace();
+  const { refreshAll } = useWorkspace();
   const [form, setForm] = useState({
     resource_type: "boat",
     quantity: 1,
@@ -1333,10 +1408,12 @@ function CreateOfferForm({ onClose }) {
     organization_id: "anonymous",
   });
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
+    setError(null);
     try {
       const resp = await fetch("/api/offers", {
         method: "POST",
@@ -1349,11 +1426,15 @@ function CreateOfferForm({ onClose }) {
         }),
       });
       if (resp.ok) {
-        fetchOffers();
+        refreshAll();
         onClose();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to create offer (${resp.status})`);
       }
     } catch (err) {
       console.error("Failed to create offer:", err);
+      setError("Network error: could not reach server");
     } finally {
       setSubmitting(false);
     }
@@ -1448,6 +1529,12 @@ function CreateOfferForm({ onClose }) {
           />
         </Field>
 
+        {/* Error display */}
+        {error && (
+          <div className="px-2.5 py-2 rounded bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">
+            {error}
+          </div>
+        )}
         <button
           type="submit"
           disabled={submitting}
@@ -1459,6 +1546,184 @@ function CreateOfferForm({ onClose }) {
           )}
         >
           {submitting ? "Publishing..." : "Publish Offer"}
+        </button>
+      </form>
+    </>
+  );
+}
+
+// -------------------------------------------------------------------
+// Create Operation form
+// -------------------------------------------------------------------
+
+function CreateOperationForm({ onClose }) {
+  const { refreshAll } = useWorkspace();
+  const [form, setForm] = useState({
+    name: "",
+    operation_type: "supply_delivery",
+    description: "",
+    need_id: "",
+    lead_organization_id: "",
+    location_name: "",
+    lat: "",
+    lon: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const { state } = useWorkspace();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const resp = await fetch("/api/operations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...form,
+          need_id: form.need_id || null,
+          lead_organization_id: form.lead_organization_id || null,
+          lat: form.lat ? parseFloat(form.lat) : null,
+          lon: form.lon ? parseFloat(form.lon) : null,
+        }),
+      });
+      if (resp.ok) {
+        const result = await resp.json();
+        refreshAll();
+        onClose();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to create operation (${resp.status})`);
+      }
+    } catch (err) {
+      console.error("Failed to create operation:", err);
+      setError("Network error: could not reach server");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <PanelHeader
+        icon={Zap}
+        title="Create Operation"
+        subtitle="Start a coordinated response"
+        onClose={onClose}
+        color="#2563eb"
+      />
+      <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-3">
+        <Field label="Operation Name">
+          <input
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            placeholder="e.g., Water delivery to Demow camp"
+            className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+            required
+          />
+        </Field>
+
+        <Field label="Type">
+          <select
+            value={form.operation_type}
+            onChange={(e) => setForm({ ...form, operation_type: e.target.value })}
+            className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] outline-none"
+          >
+            {["rescue", "medical", "supply_delivery", "evacuation", "assessment", "collaboration", "other"].map(
+              (t) => (
+                <option key={t} value={t}>
+                  {t.replace(/_/g, " ")}
+                </option>
+              )
+            )}
+          </select>
+        </Field>
+
+        <Field label="Description">
+          <textarea
+            value={form.description}
+            onChange={(e) => setForm({ ...form, description: e.target.value })}
+            placeholder="Details about this operation..."
+            className="w-full h-16 px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none resize-none"
+          />
+        </Field>
+
+        <Field label="Linked Need (optional)">
+          <select
+            value={form.need_id}
+            onChange={(e) => setForm({ ...form, need_id: e.target.value })}
+            className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] outline-none"
+          >
+            <option value="">None</option>
+            {state.needs.filter(n => n.status !== "RESOLVED" && n.status !== "CLOSED").map(n => (
+              <option key={n.id} value={n.id}>
+                {n.title || n.need_type} ({n.id})
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Lead Organization (optional)">
+          <select
+            value={form.lead_organization_id}
+            onChange={(e) => setForm({ ...form, lead_organization_id: e.target.value })}
+            className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] outline-none"
+          >
+            <option value="">None</option>
+            {state.organizations.map(o => (
+              <option key={o.id} value={o.id}>
+                {o.name} ({o.id})
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Location Name">
+          <input
+            value={form.location_name}
+            onChange={(e) => setForm({ ...form, location_name: e.target.value })}
+            placeholder="e.g., Demow, Jorhat"
+            className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+          />
+        </Field>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Latitude">
+            <input
+              value={form.lat}
+              onChange={(e) => setForm({ ...form, lat: e.target.value })}
+              placeholder="26.74"
+              className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+            />
+          </Field>
+          <Field label="Longitude">
+            <input
+              value={form.lon}
+              onChange={(e) => setForm({ ...form, lon: e.target.value })}
+              placeholder="94.21"
+              className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+            />
+          </Field>
+        </div>
+
+        {/* Error display */}
+        {error && (
+          <div className="px-2.5 py-2 rounded bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">
+            {error}
+          </div>
+        )}
+        <button
+          type="submit"
+          disabled={submitting || !form.name.trim()}
+          className={cn(
+            "w-full px-3 py-2 rounded text-[12px] font-semibold transition-colors",
+            form.name.trim() && !submitting
+              ? "bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30"
+              : "bg-[#1a2332] text-[#6b7d93] border border-[#2a3a4e] cursor-not-allowed"
+          )}
+        >
+          {submitting ? "Creating..." : "Create Operation"}
         </button>
       </form>
     </>
@@ -1511,6 +1776,101 @@ const FINDING_TYPE_LABELS = {
 // -------------------------------------------------------------------
 // AI Coordinator Findings panel
 // -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+// Network Agent Section — Network Main Agent analysis
+// -------------------------------------------------------------------
+
+function NetworkAgentSection() {
+  const { openPanel, setMapCenter } = useWorkspace();
+  const [networkAnalysis, setNetworkAnalysis] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/network/agent/situation")
+      .then(r => r.ok ? r.json() : null)
+      .then(data => setNetworkAnalysis(data))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="p-2 rounded bg-[#1a2332] border border-[#2a3a4e]">
+        <div className="text-[10px] text-[#6b7d93] animate-pulse">Loading network analysis...</div>
+      </div>
+    );
+  }
+
+  if (!networkAnalysis) return null;
+
+  const severity = networkAnalysis.severity_summary || {};
+  const actions = networkAnalysis.recommended_actions || [];
+  const risks = networkAnalysis.risks || [];
+
+  return (
+    <div className="space-y-2 pt-3 border-t border-[#2a3a4e]">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between px-2 py-1.5 rounded bg-[#1a2332] border border-[#2a3a4e] hover:border-[#4ea8de]/30 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Globe className="w-3.5 h-3.5 text-[#4ea8de]" />
+          <span className="text-[11px] font-semibold text-[#c8d6e5]">Network Agent</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {severity.critical > 0 && <span className="text-[9px] font-mono text-red-400">{severity.critical}</span>}
+          {severity.urgent > 0 && <span className="text-[9px] font-mono text-amber-400">{severity.urgent}</span>}
+          <ChevronDown className={cn("w-3 h-3 text-[#6b7d93] transition-transform", expanded && "rotate-180")} />
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="space-y-2 px-1">
+          {/* Summary */}
+          <div className="text-[10px] text-[#a0aec0]">{networkAnalysis.summary}</div>
+
+          {/* Priority needs */}
+          {networkAnalysis.priority_needs && networkAnalysis.priority_needs.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[9px] font-semibold text-[#6b7d93] uppercase tracking-wider">PRIORITY NEEDS</div>
+              {networkAnalysis.priority_needs.slice(0, 3).map((n, i) => (
+                <div key={i} className="flex items-center gap-2 text-[10px]">
+                  <AlertTriangle className="w-3 h-3 shrink-0" style={{ color: n.severity === 'critical' ? '#dc2626' : '#d97706' }} />
+                  <span className="text-[#a0aec0]">{n.title}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Risks */}
+          {risks.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[9px] font-semibold text-[#6b7d93] uppercase tracking-wider">RISKS</div>
+              {risks.slice(0, 3).map((r, i) => (
+                <div key={i} className="flex items-center gap-2 text-[10px]">
+                  <Shield className="w-3 h-3 shrink-0 text-amber-400" />
+                  <span className="text-[#a0aec0]">{r.title}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Recommended actions */}
+          {actions.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[9px] font-semibold text-[#6b7d93] uppercase tracking-wider">RECOMMENDED ACTIONS</div>
+              {actions.slice(0, 3).map((a, i) => (
+                <div key={i} className="text-[10px] text-[#a0aec0]">• {a.detail}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AIAnalysisPanel({ onClose }) {
   const { openPanel, setMapCenter, state, fetchAiAnalysis } = useWorkspace();
@@ -1717,6 +2077,9 @@ function AIAnalysisPanel({ onClose }) {
         )}
 
         {/* Refresh */}
+        {/* Network Agent Section */}
+        {!loading && !error && <NetworkAgentSection />}
+
         {!loading && !error && (
           <button
             onClick={fetchAiAnalysis}
@@ -1822,13 +2185,16 @@ function _timeAgo(isoStr) {
 // -------------------------------------------------------------------
 
 function RoadDetail({ data, onClose }) {
+  const { refreshAll } = useWorkspace();
   const [showOverride, setShowOverride] = useState(false);
   const [overrideStatus, setOverrideStatus] = useState("blocked");
   const [overrideReason, setOverrideReason] = useState("");
+  const [error, setError] = useState(null);
 
   const handleApplyOverride = async () => {
+    setError(null);
     try {
-      await fetch("/api/override", {
+      const resp = await fetch("/api/override", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1838,9 +2204,16 @@ function RoadDetail({ data, onClose }) {
           reason: overrideReason,
         }),
       });
-      onClose();
+      if (resp.ok) {
+        refreshAll();
+        onClose();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to apply override (${resp.status})`);
+      }
     } catch (err) {
       console.error("Override failed:", err);
+      setError("Network error: could not reach server");
     }
   };
 
@@ -1969,6 +2342,153 @@ function Field({ label, children }) {
 }
 
 // -------------------------------------------------------------------
+// Organization detail panel
+// -------------------------------------------------------------------
+
+function OrganizationDetail({ data, onClose }) {
+  return (
+    <>
+      <PanelHeader
+        icon={Globe}
+        title={data.name}
+        subtitle={`${data.id} · ${data.organization_type}`}
+        onClose={onClose}
+        color="#2563eb"
+      />
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex items-center gap-2">
+          <StatusBadge
+            status={data.active ? "active" : "inactive"}
+            color={data.active ? "#16a34a" : "#6b7d93"}
+          />
+          <span className="text-[10px] text-[#6b7d93] capitalize">
+            {data.organization_type}
+          </span>
+        </div>
+
+        {data.description && (
+          <div className="text-[12px] text-[#a0aec0] leading-relaxed">
+            {data.description}
+          </div>
+        )}
+
+        {data.published_capabilities && data.published_capabilities.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+              Published Capabilities
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {data.published_capabilities.map((cap, i) => (
+                <span
+                  key={i}
+                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                >
+                  {cap}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {data.public_contact && Object.keys(data.public_contact).length > 0 && (
+          <div className="space-y-1">
+            <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+              Contact
+            </div>
+            <div className="text-[11px] text-[#a0aec0]">
+              {JSON.stringify(data.public_contact)}
+            </div>
+          </div>
+        )}
+
+        <div className="text-[10px] text-[#6b7d93]">
+          Joined: {data.created_at && formatDistanceToNow(new Date(data.created_at), { addSuffix: true })}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// -------------------------------------------------------------------
+// Building detail panel
+// -------------------------------------------------------------------
+
+function BuildingDetail({ data, onClose }) {
+  return (
+    <>
+      <PanelHeader
+        icon={Building2}
+        title={data.id || "Building"}
+        subtitle="Building"
+        onClose={onClose}
+        color="#a8a29e"
+      />
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex items-center gap-2">
+          <StatusBadge
+            status={data.in_flood_zone ? "in flood zone" : "clear"}
+            color={data.in_flood_zone ? "#dc2626" : "#16a34a"}
+          />
+        </div>
+
+        {data.district_id && (
+          <div className="text-[11px] text-[#a0aec0]">
+            District: {data.district_id}
+          </div>
+        )}
+
+        {data.tags && Object.keys(data.tags).length > 0 && (
+          <div className="space-y-2">
+            <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+              Tags
+            </div>
+            <div className="p-2.5 rounded bg-[#1a2332] border border-[#2a3a4e] space-y-1">
+              {Object.entries(data.tags).map(([key, value]) => (
+                <div key={key} className="flex items-start gap-2 text-[10px]">
+                  <span className="text-[#6b7d93] shrink-0 min-w-[80px]">{key}:</span>
+                  <span className="text-[#a0aec0] break-all">{String(value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// -------------------------------------------------------------------
+// Incident empty state panel
+// -------------------------------------------------------------------
+
+function IncidentEmptyState({ onClose }) {
+  return (
+    <>
+      <PanelHeader
+        icon={Shield}
+        title="Incidents"
+        subtitle="Operational incidents"
+        onClose={onClose}
+        color="#d97706"
+      />
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <div className="w-12 h-12 rounded-full bg-[#1a2332] border border-[#2a3a4e] flex items-center justify-center mb-3">
+            <Inbox className="w-5 h-5 text-[#6b7d93]" />
+          </div>
+          <div className="text-[13px] font-medium text-[#c8d6e5] mb-1">
+            No active incidents recorded
+          </div>
+          <div className="text-[11px] text-[#6b7d93] max-w-[240px] leading-relaxed">
+            Incidents will appear here when field teams or the AI coordinator log operational incidents during the response.
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// -------------------------------------------------------------------
 // Main ContextPanel
 // -------------------------------------------------------------------
 
@@ -2013,6 +2533,15 @@ export default function ContextPanel() {
       {state.panelType === "road" && state.panelData && (
         <RoadDetail data={state.panelData} onClose={closePanel} />
       )}
+      {state.panelType === "organization" && state.panelData && (
+        <OrganizationDetail data={state.panelData} onClose={closePanel} />
+      )}
+      {state.panelType === "building" && state.panelData && (
+        <BuildingDetail data={state.panelData} onClose={closePanel} />
+      )}
+      {state.panelType === "incident" && (
+        <IncidentEmptyState onClose={closePanel} />
+      )}
       {state.panelType === "createNeed" && (
         <CreateNeedForm onClose={closePanel} />
       )}
@@ -2021,6 +2550,9 @@ export default function ContextPanel() {
       )}
       {state.panelType === "createOffer" && (
         <CreateOfferForm onClose={closePanel} />
+      )}
+      {state.panelType === "createOperation" && (
+        <CreateOperationForm onClose={closePanel} />
       )}
       {state.panelType === "aiAnalysis" && (
         <AIAnalysisPanel onClose={closePanel} />

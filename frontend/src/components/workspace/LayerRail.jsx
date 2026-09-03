@@ -1,7 +1,7 @@
 import {
   Droplets, Route, Landmark, Building2, Hospital, MapPin,
   AlertTriangle, Package, Zap, FileText, Shield, Brain,
-  Plus, ChevronRight, ChevronLeft,
+  Plus, ChevronRight, ChevronLeft, Users, Clock, EyeOff, Eye,
 } from "lucide-react";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
@@ -12,6 +12,7 @@ const LAYER_GROUPS = [
     label: "HAZARD",
     layers: [
       { id: "flood", label: "Flood", icon: Droplets, color: "#0891b2" },
+      { id: "floodHistory", label: "Flood History", icon: Clock, color: "#0e7490" },
     ],
   },
   {
@@ -19,6 +20,7 @@ const LAYER_GROUPS = [
     layers: [
       { id: "roads", label: "Roads", icon: Route, color: "#16a34a" },
       { id: "bridges", label: "Bridges", icon: Landmark, color: "#16a34a" },
+      { id: "settlements", label: "Settlements", icon: MapPin, color: "#78716c" },
       { id: "buildings", label: "Buildings", icon: Building2, color: "#a8a29e" },
       { id: "medical", label: "Medical", icon: Hospital, color: "#0891b2" },
     ],
@@ -26,6 +28,7 @@ const LAYER_GROUPS = [
   {
     label: "RESPONSE",
     layers: [
+      { id: "organizations", label: "Organizations", icon: Users, color: "#2563eb" },
       { id: "needs", label: "Needs", icon: AlertTriangle, color: "#dc2626" },
       { id: "incidents", label: "Incidents", icon: Shield, color: "#d97706" },
       { id: "operations", label: "Operations", icon: Zap, color: "#2563eb" },
@@ -86,6 +89,46 @@ function LayerToggle({ layer, active, onToggle, count }) {
   );
 }
 
+// -------------------------------------------------------------------
+// Flood History snapshot selector (shown when floodHistory layer is active)
+// -------------------------------------------------------------------
+
+function FloodHistorySelector() {
+  const { state, selectFloodSnapshot } = useWorkspace();
+  const snapshots = state.floodSnapshots || [];
+  const selected = state.selectedFloodSnapshot;
+
+  if (!state.layers.floodHistory || snapshots.length === 0) return null;
+
+  return (
+    <div className="px-2 py-1.5 space-y-1 border-b border-[#2a3a4e]">
+      <div className="text-[9px] font-semibold text-[#4a5568] uppercase tracking-wider px-1 mb-1">
+        Available Snapshots
+      </div>
+      {snapshots.map((snap) => (
+        <button
+          key={snap.id}
+          onClick={() => selectFloodSnapshot(snap)}
+          className={cn(
+            "w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-all text-[10px]",
+            selected?.id === snap.id
+              ? "bg-[#0e7490]/15 border border-[#0e7490]/30 text-[#c8d6e5]"
+              : "hover:bg-[#1a2332]/50 text-[#6b7d93] border border-transparent"
+          )}
+        >
+          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: selected?.id === snap.id ? "#0e7490" : "#4a5568" }} />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium truncate">{snap.district_id}</div>
+            <div className="text-[9px] opacity-70">
+              {snap.observed_at ? new Date(snap.observed_at).toLocaleDateString() : ""} · {snap.polygon_count} polygons
+            </div>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function LayerRail() {
   const { state, toggleLayer, openPanel, setFilter } = useWorkspace();
   const [collapsed, setCollapsed] = useState(false);
@@ -94,10 +137,16 @@ export default function LayerRail() {
   const counts = {
     roads: state.roads.length,
     bridges: state.bridges.length,
+    settlements: state.settlements.length,
+    buildings: state.buildingsMeta?.total_available ?? state.buildings.length,
+    medical: state.medicalFacilities.length,
+    organizations: state.organizations.length,
     needs: state.needs.length,
     offers: state.offers.length,
     operations: state.operations.length,
+    incidents: state.incidents.length,
     fieldReports: state.fieldReports.length,
+    floodHistory: state.floodSnapshots.length,
   };
 
   if (collapsed) {
@@ -237,6 +286,9 @@ export default function LayerRail() {
           </div>
         ))}
       </div>
+
+      {/* Flood History snapshot selector */}
+      <FloodHistorySelector />
 
       {/* Quick actions */}
       <div className="p-2 border-t border-[#2a3a4e] space-y-1">

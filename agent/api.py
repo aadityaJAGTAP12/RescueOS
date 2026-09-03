@@ -132,6 +132,13 @@ def api_locations():
     Falls back to legacy KNOWN_LOCATIONS.
     """
     locations = []
+    try:
+        from agent.data.repository import get_repository
+        settlements = get_repository().list_settlements()
+        if settlements:
+            return jsonify({"locations": [s.to_dict() for s in settlements]})
+    except Exception:
+        pass
     # Phase 4: Use repository-backed locations
     all_locs = get_all_known_locations()
     for name, (lon, lat) in all_locs.items():
@@ -889,6 +896,17 @@ def api_district_bridges(district_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/districts/<district_id>/medical-facilities", methods=["GET"])
+def api_district_medical_facilities(district_id):
+    """Return real medical facilities for a district."""
+    try:
+        from agent.data.repository import get_repository
+        facilities = get_repository().get_medical_facilities(district_id)
+        return jsonify({"facilities": [f.to_dict() for f in facilities], "count": len(facilities)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ---------------------------------------------------------------------------
 # Needs endpoints
 # ---------------------------------------------------------------------------
@@ -990,14 +1008,24 @@ def api_update_need(need_id):
         # Update fields
         if "status" in payload:
             old_status = need.status
-            need.status = payload["status"]
+            new_status = payload["status"]
+            need.status = new_status
+            # Use specific event types for lifecycle transitions
+            if new_status == "RESOLVED" or new_status == "CLOSED":
+                event_type = "need_resolved"
+            elif old_status in ("RESOLVED", "CLOSED") and new_status == "OPEN":
+                event_type = "need_reopened"
+            elif new_status == "RESPONDING" and old_status == "OPEN":
+                event_type = "need_accepted"
+            else:
+                event_type = "need_updated"
             repo.append_activity_event(ActivityEvent(
                 id=f"evt_{str(uuid.uuid4())[:8]}",
                 entity_type="need",
                 entity_id=need_id,
-                event_type="status_changed",
+                event_type=event_type,
                 actor=payload.get("actor", "coordinator"),
-                detail=f"Status changed: {old_status} → {need.status}",
+                detail=f"Need status: {old_status} → {need.status}",
             ))
         if "title" in payload:
             need.title = payload["title"]
@@ -1225,14 +1253,23 @@ def api_update_operation(op_id):
 
         if "status" in payload:
             old_status = op.status
-            op.status = payload["status"]
+            new_status = payload["status"]
+            op.status = new_status
+            if new_status == "COMPLETED":
+                event_type = "operation_resolved"
+            elif old_status == "PLANNING" and new_status == "ACTIVE":
+                event_type = "operation_activated"
+            elif new_status == "CANCELLED":
+                event_type = "operation_cancelled"
+            else:
+                event_type = "operation_updated"
             repo.append_activity_event(ActivityEvent(
                 id=f"evt_{str(uuid.uuid4())[:8]}",
                 entity_type="operation",
                 entity_id=op_id,
-                event_type="status_changed",
+                event_type=event_type,
                 actor=payload.get("actor", "coordinator"),
-                detail=f"Operation status changed: {old_status} → {op.status}",
+                detail=f"Operation {op.name}: {old_status} → {new_status}",
             ))
         if "name" in payload:
             op.name = payload["name"]
@@ -1300,6 +1337,312 @@ def api_get_organization(org_id):
         if not org:
             return jsonify({"error": "Organization not found"}), 404
         return jsonify({"organization": org.to_dict()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Organization Workspace endpoints (Phase 7E)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/orgs/<org_id>/summary", methods=["GET"])
+def api_org_summary(org_id):
+    """Get organization workspace summary (private + public state)."""
+    try:
+        from agent.org_workspace import get_org_summary
+        result = get_org_summary(org_id)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/resources", methods=["GET"])
+def api_org_list_resources(org_id):
+    """List private resources for an organization."""
+    try:
+        from agent.org_workspace import list_resources
+        resources = list_resources(org_id)
+        return jsonify({"resources": resources})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/resources", methods=["POST"])
+def api_org_add_resource(org_id):
+    """Add a private resource to organization inventory."""
+    try:
+        from agent.org_workspace import add_resource
+        payload = request.get_json(force=True, silent=True)
+        if not payload:
+            return jsonify({"error": "Invalid JSON body"}), 400
+        resource = add_resource(org_id, payload)
+        return jsonify({"resource": resource}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/resources/<resource_id>", methods=["PATCH"])
+def api_org_update_resource(org_id, resource_id):
+    """Update a private resource."""
+    try:
+        from agent.org_workspace import update_resource
+        payload = request.get_json(force=True, silent=True)
+        if not payload:
+            return jsonify({"error": "Invalid JSON body"}), 400
+        result = update_resource(org_id, resource_id, payload)
+        if not result:
+            return jsonify({"error": "Resource not found"}), 404
+        return jsonify({"resource": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/resources/<resource_id>", methods=["DELETE"])
+def api_org_delete_resource(org_id, resource_id):
+    """Delete a private resource."""
+    try:
+        from agent.org_workspace import delete_resource
+        deleted = delete_resource(org_id, resource_id)
+        if not deleted:
+            return jsonify({"error": "Resource not found"}), 404
+        return jsonify({"message": "Resource deleted"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/teams", methods=["GET"])
+def api_org_list_teams(org_id):
+    """List private teams for an organization."""
+    try:
+        from agent.org_workspace import list_teams
+        teams = list_teams(org_id)
+        return jsonify({"teams": teams})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/teams", methods=["POST"])
+def api_org_add_team(org_id):
+    """Add a private team."""
+    try:
+        from agent.org_workspace import add_team
+        payload = request.get_json(force=True, silent=True)
+        if not payload:
+            return jsonify({"error": "Invalid JSON body"}), 400
+        team = add_team(org_id, payload)
+        return jsonify({"team": team}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/teams/<team_id>", methods=["PATCH"])
+def api_org_update_team(org_id, team_id):
+    """Update a private team."""
+    try:
+        from agent.org_workspace import update_team
+        payload = request.get_json(force=True, silent=True)
+        if not payload:
+            return jsonify({"error": "Invalid JSON body"}), 400
+        result = update_team(org_id, team_id, payload)
+        if not result:
+            return jsonify({"error": "Team not found"}), 404
+        return jsonify({"team": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/missions", methods=["GET"])
+def api_org_list_missions(org_id):
+    """List private missions for an organization."""
+    try:
+        from agent.org_workspace import list_missions
+        missions = list_missions(org_id)
+        return jsonify({"missions": missions})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/missions", methods=["POST"])
+def api_org_add_mission(org_id):
+    """Add a private mission."""
+    try:
+        from agent.org_workspace import add_mission
+        payload = request.get_json(force=True, silent=True)
+        if not payload:
+            return jsonify({"error": "Invalid JSON body"}), 400
+        mission = add_mission(org_id, payload)
+        return jsonify({"mission": mission}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/missions/<mission_id>", methods=["PATCH"])
+def api_org_update_mission(org_id, mission_id):
+    """Update a private mission."""
+    try:
+        from agent.org_workspace import update_mission
+        payload = request.get_json(force=True, silent=True)
+        if not payload:
+            return jsonify({"error": "Invalid JSON body"}), 400
+        result = update_mission(org_id, mission_id, payload)
+        if not result:
+            return jsonify({"error": "Mission not found"}), 404
+        return jsonify({"mission": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/agent/analyze-need", methods=["POST"])
+def api_org_agent_analyze_need(org_id):
+    """
+    NGO Main Agent analyzes a network Need using private organizational context.
+    
+    Body: {"need": {...}} — the full need dict from the network.
+    
+    Returns recommendation, evidence, proposed publication.
+    This endpoint performs NO writes — human must approve any publication.
+    """
+    try:
+        from agent.agents.ngo_main_agent import analyze_need_for_org
+        from agent.org_workspace import list_resources, list_teams, list_missions
+        from agent.data.repository import get_repository
+        
+        payload = request.get_json(force=True, silent=True)
+        if not payload or not payload.get("need"):
+            return jsonify({"error": "Body must include 'need'"}), 400
+        
+        need = payload["need"]
+        
+        # Load private context
+        resources = list_resources(org_id)
+        teams = list_teams(org_id)
+        missions = list_missions(org_id)
+        
+        # Load shared context
+        repo = get_repository()
+        network_needs = [n.to_dict() for n in repo.list_needs(status="OPEN")]
+        network_ops = [o.to_dict() for o in repo.list_operations()]
+        
+        try:
+            from agent.overrides import get_all_overrides
+            overrides = get_all_overrides()
+        except Exception:
+            overrides = []
+        
+        result = analyze_need_for_org(
+            org_id=org_id,
+            need=need,
+            private_resources=resources,
+            private_teams=teams,
+            private_missions=missions,
+            network_needs=network_needs,
+            network_operations=network_ops,
+            network_overrides=overrides,
+        )
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/agent/situation", methods=["GET"])
+def api_org_agent_situation(org_id):
+    """
+    NGO Main Agent situation summary.
+    
+    Returns private + network summary with attention items.
+    """
+    try:
+        from agent.agents.ngo_main_agent import get_org_situation
+        from agent.org_workspace import list_resources, list_teams, list_missions
+        from agent.data.repository import get_repository
+        
+        # Load private context
+        resources = list_resources(org_id)
+        teams = list_teams(org_id)
+        missions = list_missions(org_id)
+        
+        # Load shared context
+        repo = get_repository()
+        network_needs = [n.to_dict() for n in repo.list_needs(status="OPEN")]
+        network_ops = [o.to_dict() for o in repo.list_operations()]
+        network_offers = [o.to_dict() for o in repo.list_resource_offers()]
+        
+        try:
+            from agent.overrides import get_all_overrides
+            overrides = get_all_overrides()
+        except Exception:
+            overrides = []
+        
+        result = get_org_situation(
+            org_id=org_id,
+            private_resources=resources,
+            private_teams=teams,
+            private_missions=missions,
+            network_needs=network_needs,
+            network_operations=network_ops,
+            network_offers=network_offers,
+            network_overrides=overrides,
+        )
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/publish-offer", methods=["POST"])
+def api_org_publish_offer(org_id):
+    """
+    Publish a resource offer from private inventory to the shared network.
+    
+    This is the critical privacy boundary: the user explicitly chooses
+    what to publish. Private inventory is NOT automatically exposed.
+    """
+    try:
+        import uuid
+        from agent.data.repository import get_repository
+        from agent.data.models import ResourceOffer, ActivityEvent
+        from agent.org_workspace import update_resource
+        
+        payload = request.get_json(force=True, silent=True)
+        if not payload:
+            return jsonify({"error": "Invalid JSON body"}), 400
+        
+        repo = get_repository()
+        
+        # Create the public Resource Offer
+        offer_id = f"offer_{str(uuid.uuid4())[:8]}"
+        offer = ResourceOffer(
+            id=offer_id,
+            organization_id=org_id,
+            resource_type=payload.get("resource_type", "other"),
+            quantity=payload.get("quantity", 0),
+            unit=payload.get("unit", "units"),
+            lat=payload.get("lat"),
+            lon=payload.get("lon"),
+            location_name=payload.get("location_name"),
+            district_id=payload.get("district_id"),
+            status="OFFERED",
+            notes=payload.get("notes", ""),
+        )
+        result = repo.create_resource_offer(offer)
+        
+        # Update private resource status if linked
+        private_resource_id = payload.get("private_resource_id")
+        if private_resource_id:
+            update_resource(org_id, private_resource_id, {"status": "committed"})
+        
+        # Record activity
+        repo.append_activity_event(ActivityEvent(
+            id=f"evt_{str(uuid.uuid4())[:8]}",
+            entity_type="resource_offer",
+            entity_id=offer_id,
+            event_type="resource_offered",
+            actor=org_id,
+            detail=f"Published offer: {offer.quantity} {offer.resource_type} from {org_id}",
+        ))
+        
+        return jsonify({"offer": result.to_dict(), "message": "Offer published to network"}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1597,6 +1940,283 @@ def api_ai_coordinator_analysis():
 
 
 # ---------------------------------------------------------------------------
+# Coordination endpoints (Phase 7H)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/network/coordination/propose", methods=["POST"])
+def api_coordination_propose():
+    """
+    Create a coordination proposal for a Need.
+    
+    Body: {"need": {...}, "organization_id": "...", "organization_name": "..."}
+    
+    This does NOT publish anything — it creates a proposal for review.
+    """
+    try:
+        from agent.coordination.proposal import create_proposal
+        from agent.coordination.candidate_selection import select_candidates
+        from agent.data.repository import get_repository
+        
+        payload = request.get_json(force=True, silent=True)
+        if not payload:
+            return jsonify({"error": "Invalid JSON body"}), 400
+        
+        need = payload.get("need", {})
+        org_id = payload.get("organization_id")
+        org_name = payload.get("organization_name", org_id)
+        
+        if not org_id:
+            return jsonify({"error": "organization_id required"}), 400
+        
+        # Find candidates (uses public info only)
+        repo = get_repository()
+        candidates = select_candidates(need, repo)
+        
+        # Create proposal
+        proposal = create_proposal(
+            need_id=need.get("id", ""),
+            organization_id=org_id,
+            organization_name=org_name,
+            proposal_type=need.get("need_type", "other"),
+            summary=f"Coordination proposal for {need.get('title', need.get('need_type', ''))}",
+            public_evidence=[{"type": "candidate_selection", "detail": f"{len(candidates)} candidate(s) identified"}],
+            network_findings=[{"type": "need_analysis", "detail": f"Need requires {need.get('need_type', '')} support"}],
+        )
+        
+        # Record activity
+        from agent.data.models import ActivityEvent
+        repo.append_activity_event(ActivityEvent(
+            id=f"evt_{str(uuid.uuid4())[:8]}",
+            entity_type="coordination",
+            entity_id=proposal["id"],
+            event_type="coordination_proposed",
+            actor="network_agent",
+            detail=f"Coordination proposal created for Need {need.get('id', '')} → {org_name}",
+        ))
+        
+        return jsonify({"proposal": proposal, "candidates": candidates}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/network/coordination/proposals", methods=["GET"])
+def api_list_proposals():
+    """List coordination proposals."""
+    try:
+        from agent.coordination.proposal import list_proposals, get_public_view
+        need_id = request.args.get("need_id")
+        org_id = request.args.get("organization_id")
+        status = request.args.get("status")
+        proposals = list_proposals(need_id=need_id, organization_id=org_id, status=status)
+        # Return public view only
+        return jsonify({"proposals": [get_public_view(p) for p in proposals]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/network/coordination/proposals/<proposal_id>", methods=["GET"])
+def api_get_proposal(proposal_id):
+    """Get a specific proposal."""
+    try:
+        from agent.coordination.proposal import get_proposal, get_public_view
+        proposal = get_proposal(proposal_id)
+        if not proposal:
+            return jsonify({"error": "Proposal not found"}), 404
+        return jsonify({"proposal": get_public_view(proposal)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/network/coordination/proposals/<proposal_id>/send-to-org", methods=["POST"])
+def api_send_proposal_to_org(proposal_id):
+    """Send proposal to NGO for evaluation."""
+    try:
+        from agent.coordination.proposal import send_to_org
+        proposal = send_to_org(proposal_id)
+        if not proposal:
+            return jsonify({"error": "Proposal not found"}), 404
+        return jsonify({"proposal": proposal})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/agent/evaluate-coordination", methods=["POST"])
+def api_org_evaluate_coordination(org_id):
+    """
+    NGO Main Agent privately evaluates a coordination proposal.
+    
+    Body: {"proposal_id": "..."}
+    
+    Returns evaluation (private factors are stored but NOT exposed in response).
+    """
+    try:
+        from agent.coordination.proposal import get_proposal, record_org_evaluation
+        from agent.coordination.ngo_evaluation import evaluate_coordination
+        
+        payload = request.get_json(force=True, silent=True)
+        if not payload or not payload.get("proposal_id"):
+            return jsonify({"error": "proposal_id required"}), 400
+        
+        proposal = get_proposal(payload["proposal_id"])
+        if not proposal:
+            return jsonify({"error": "Proposal not found"}), 404
+        
+        # Evaluate using private state
+        evaluation = evaluate_coordination(proposal, org_id)
+        
+        # Record evaluation (private_factors stored but not exposed)
+        record_org_evaluation(
+            proposal["id"],
+            evaluation=evaluation,
+            private_factors=evaluation.get("private_factors", []),
+        )
+        
+        # Return PUBLIC parts only
+        from agent.coordination.publication import extract_public_fields
+        public_eval = extract_public_fields(evaluation)
+        
+        # Record activity
+        from agent.data.repository import get_repository
+        from agent.data.models import ActivityEvent
+        repo = get_repository()
+        repo.append_activity_event(ActivityEvent(
+            id=f"evt_{str(uuid.uuid4())[:8]}",
+            entity_type="coordination",
+            entity_id=proposal["id"],
+            event_type="organization_evaluation_completed",
+            actor=org_id,
+            detail=f"Organization {org_id} evaluated proposal: {evaluation.get('decision', '')}",
+        ))
+        
+        return jsonify({"evaluation": public_eval, "proposal_id": proposal["id"]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orgs/<org_id>/agent/approve-publication", methods=["POST"])
+def api_org_approve_publication(org_id):
+    """
+    Human-approved publication of proposed response.
+    
+    Body: {"proposal_id": "..."}
+    
+    Creates a public Resource Offer from the approved proposal.
+    """
+    try:
+        from agent.coordination.proposal import get_proposal, approve_publication, link_offer
+        from agent.coordination.publication import create_public_offer_from_proposal
+        from agent.data.repository import get_repository
+        
+        payload = request.get_json(force=True, silent=True)
+        if not payload or not payload.get("proposal_id"):
+            return jsonify({"error": "proposal_id required"}), 400
+        
+        proposal = get_proposal(payload["proposal_id"])
+        if not proposal:
+            return jsonify({"error": "Proposal not found"}), 404
+        
+        if not proposal.get("org_evaluation"):
+            return jsonify({"error": "No evaluation recorded for this proposal"}), 400
+        
+        # Approve
+        approve_publication(proposal["id"], approved_by="human")
+        
+        # Create public offer
+        repo = get_repository()
+        result = create_public_offer_from_proposal(
+            proposal=proposal,
+            org_evaluation=proposal["org_evaluation"],
+            org_id=org_id,
+            repo=repo,
+        )
+        
+        if result.get("offer"):
+            link_offer(proposal["id"], result["offer"]["id"])
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/network/coordination/proposals/<proposal_id>/decline", methods=["POST"])
+def api_decline_proposal(proposal_id):
+    """Decline a coordination proposal."""
+    try:
+        from agent.coordination.proposal import decline_proposal
+        proposal = decline_proposal(proposal_id)
+        if not proposal:
+            return jsonify({"error": "Proposal not found"}), 404
+        return jsonify({"proposal": proposal})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Network Main Agent endpoints (Phase 7G)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/network/agent/analyze", methods=["GET"])
+def api_network_agent_analyze():
+    """
+    Run full Network Main Agent analysis.
+    
+    Returns structured findings, evidence, uncertainty, and recommended actions.
+    This endpoint performs NO writes.
+    """
+    try:
+        from agent.agents.network_main_agent import run_network_analysis
+        result = run_network_analysis()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/network/agent/analyze-need", methods=["POST"])
+def api_network_agent_analyze_need():
+    """
+    Analyze a specific need in network context.
+    
+    Body: {"need": {...}} — the full need dict.
+    
+    Returns evidence, access, coordination, and recommendations.
+    This endpoint performs NO writes.
+    """
+    try:
+        from agent.agents.network_main_agent import analyze_need_in_network
+        payload = request.get_json(force=True, silent=True)
+        if not payload or not payload.get("need"):
+            return jsonify({"error": "Body must include 'need'"}), 400
+        result = analyze_need_in_network(payload["need"])
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/network/agent/situation", methods=["GET"])
+def api_network_agent_situation():
+    """
+    Get network situation summary from the Network Main Agent.
+    
+    This endpoint performs NO writes.
+    """
+    try:
+        from agent.agents.network_main_agent import run_network_analysis
+        result = run_network_analysis()
+        # Return just the summary and priority items
+        return jsonify({
+            "generated_at": result.get("generated_at"),
+            "summary": result.get("summary"),
+            "situation": result.get("situation"),
+            "priority_needs": result.get("priority_needs"),
+            "risks": result.get("risks"),
+            "severity_summary": result.get("severity_summary"),
+            "recommended_actions": result.get("recommended_actions"),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # Delta Engine endpoint (Phase 7D)
 # ---------------------------------------------------------------------------
 
@@ -1613,7 +2233,8 @@ def api_delta():
     try:
         from agent.delta import compute_delta
         hours = float(request.args.get('hours', 24.0))
-        result = compute_delta(lookback_hours=hours)
+        from agent.data.repository import get_repository
+        result = compute_delta(get_repository(), lookback_hours=hours)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1634,6 +2255,84 @@ def api_evidence(entity_type, entity_id):
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Flood History snapshots endpoint
+# ---------------------------------------------------------------------------
+
+@app.route("/api/flood-snapshots", methods=["GET"])
+def api_flood_snapshots():
+    """
+    List all available flood snapshots for the temporal flood history.
+
+    Returns metadata (no geometry) for each snapshot:
+      id, district_id, observed_at, source, confidence, polygon_count
+    """
+    try:
+        from agent.data.repository import get_repository
+        repo = get_repository()
+        district_id = request.args.get("district")
+        snapshots = repo.list_flood_snapshots(district_id=district_id)
+        return jsonify({
+            "snapshots": [
+                {
+                    "id": s.id,
+                    "district_id": s.district_id,
+                    "observed_at": s.observed_at.isoformat() if hasattr(s.observed_at, 'isoformat') else str(s.observed_at),
+                    "source": s.source,
+                    "confidence": s.confidence,
+                    "polygon_count": s.polygon_count,
+                    "provenance": s.provenance.value if hasattr(s, 'provenance') else "REAL",
+                }
+                for s in snapshots
+            ]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/flood-snapshots/<snapshot_id>/geojson", methods=["GET"])
+def api_flood_snapshot_geojson(snapshot_id):
+    """Return the GeoJSON geometry for a specific flood snapshot."""
+    try:
+        from agent.data.repository import get_repository
+        repo = get_repository()
+        snapshot = repo.get_flood_snapshot(snapshot_id)
+        if not snapshot:
+            return jsonify({"error": "Snapshot not found"}), 404
+        if snapshot.geometry_geojson:
+            return jsonify(snapshot.geometry_geojson)
+        return jsonify({"type": "FeatureCollection", "features": []})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Incidents endpoint (empty state — no incident dataset exists)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/incidents", methods=["GET"])
+def api_list_incidents():
+    """
+    Return incidents list.
+
+    No incident dataset currently exists in the database.
+    Returns an explicit empty state rather than silently returning nothing.
+    """
+    return jsonify({
+        "incidents": [],
+        "message": "No active incidents recorded. Incidents will appear here when field teams or the AI coordinator log operational incidents.",
+        "status": "empty",
+    })
+
+
+# ---------------------------------------------------------------------------
+# Register building routes
+# ---------------------------------------------------------------------------
+
+from agent.api_buildings import register_building_routes
+register_building_routes(app)
 
 
 # ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
@@ -14,32 +15,46 @@ const EVENT_ICONS = {
   need_created: AlertTriangle,
   need_updated: AlertTriangle,
   need_resolved: AlertTriangle,
+  need_reopened: AlertTriangle,
+  need_accepted: AlertTriangle,
   match_confirmed: Zap,
   resource_offered: Package,
   resource_accepted: Package,
   operation_created: Zap,
   operation_updated: Zap,
+  operation_activated: Zap,
+  operation_resolved: Zap,
+  operation_cancelled: Zap,
   status_changed: Shield,
   field_update: FileText,
   override_applied: Shield,
   ai_recommendation: Brain,
   coordination_gap: Brain,
+  coordination_proposed: Brain,
+  organization_evaluation_completed: Brain,
 };
 
 const EVENT_SEVERITY = {
   need_created: "urgent",
   need_updated: "information",
   need_resolved: "stable",
+  need_reopened: "urgent",
+  need_accepted: "information",
   match_confirmed: "stable",
   resource_offered: "stable",
   resource_accepted: "stable",
   operation_created: "information",
   operation_updated: "information",
+  operation_activated: "stable",
+  operation_resolved: "stable",
+  operation_cancelled: "urgent",
   status_changed: "urgent",
   field_update: "information",
   override_applied: "urgent",
   ai_recommendation: "critical",
   coordination_gap: "critical",
+  coordination_proposed: "information",
+  organization_evaluation_completed: "information",
 };
 
 const SEVERITY_COLORS = {
@@ -114,7 +129,7 @@ function DirectionIndicator({ label, direction }) {
 export default function ActivityBar() {
   const { state, openPanel, delta, fetchDelta } = useWorkspace();
   const events = state.activity || [];
-  const [deltaHours, setDeltaHours] = React.useState(24);
+  const [deltaHours, setDeltaHours] = useState(24);
 
   const handleTimeChange = (hours) => {
     setDeltaHours(hours);

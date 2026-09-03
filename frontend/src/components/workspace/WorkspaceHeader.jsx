@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Shield, Bell, Search, ChevronDown, Radio, Brain,
-  X, MapPin, AlertTriangle, Zap, Route, Landmark, Clock,
+  X, MapPin, AlertTriangle, Zap, Route, Landmark, Clock, Globe,
+  Stethoscope, Package,
 } from "lucide-react";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
@@ -13,7 +14,8 @@ const SEARCH_ICONS = {
   operation: Zap,
   road: Route,
   bridge: Landmark,
-  facility: Shield,
+  facility: Stethoscope,
+  organization: Globe,
 };
 
 const SEARCH_COLORS = {
@@ -24,9 +26,10 @@ const SEARCH_COLORS = {
   road: "#16a34a",
   bridge: "#16a34a",
   facility: "#0891b2",
+  organization: "#2563eb",
 };
 
-export default function WorkspaceHeader({ onOpenAI }) {
+export default function WorkspaceHeader({ onOpenAI, mode, onModeChange }) {
   const { state, setFilter, openPanel, setSelectedEntity, performSearch, setMapCenter, fetchDelta } = useWorkspace();
   const [timeContext, setTimeContext] = useState('CURRENT');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -122,6 +125,34 @@ export default function WorkspaceHeader({ onOpenAI }) {
         <ChevronDown className="w-3 h-3 text-[#6b7d93]" />
       </div>
 
+      {/* Mode toggle */}
+      <div className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-[#1a2332] border border-[#2a3a4e]">
+        <button
+          onClick={() => onModeChange && onModeChange('network')}
+          className={cn(
+            'flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-colors',
+            mode === 'network'
+              ? 'bg-[#2a3a4e] text-[#c8d6e5]'
+              : 'text-[#6b7d93] hover:text-[#c8d6e5]'
+          )}
+        >
+          <Globe className="w-3 h-3" />
+          Network
+        </button>
+        <button
+          onClick={() => onModeChange && onModeChange('organization')}
+          className={cn(
+            'flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-colors',
+            mode === 'organization'
+              ? 'bg-[#2a3a4e] text-[#c8d6e5]'
+              : 'text-[#6b7d93] hover:text-[#c8d6e5]'
+          )}
+        >
+          <Shield className="w-3 h-3" />
+          My Org
+        </button>
+      </div>
+
       {/* Spacer */}
       <div className="flex-1" />
 
@@ -152,6 +183,32 @@ export default function WorkspaceHeader({ onOpenAI }) {
         <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
         <span className="text-green-400 hidden sm:inline">Live</span>
       </div>
+
+      {/* Quick actions */}
+      <button
+        onClick={() => openPanel("createNeed")}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#1a2332] border border-[#2a3a4e] hover:border-red-500/40 transition-colors group"
+        title="Report a new need"
+      >
+        <AlertTriangle className="w-3 h-3 text-red-400" />
+        <span className="text-[10px] font-medium text-[#6b7d93] group-hover:text-red-400 hidden sm:inline">+ Need</span>
+      </button>
+      <button
+        onClick={() => openPanel("createOperation")}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#1a2332] border border-[#2a3a4e] hover:border-blue-500/40 transition-colors group"
+        title="Create a new operation"
+      >
+        <Zap className="w-3 h-3 text-blue-400" />
+        <span className="text-[10px] font-medium text-[#6b7d93] group-hover:text-blue-400 hidden sm:inline">+ Operation</span>
+      </button>
+      <button
+        onClick={() => openPanel("createOffer")}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#1a2332] border border-[#2a3a4e] hover:border-teal-500/40 transition-colors group"
+        title="Publish a resource offer"
+      >
+        <Package className="w-3 h-3 text-teal-400" />
+        <span className="text-[10px] font-medium text-[#6b7d93] group-hover:text-teal-400 hidden sm:inline">+ Offer</span>
+      </button>
 
       {/* AI Coordinator */}
       <button

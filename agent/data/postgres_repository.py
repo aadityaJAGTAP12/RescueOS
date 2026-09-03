@@ -548,7 +548,7 @@ class PostgresRepository(DataRepository):
         return [self._row_to_medical_facility(r) for r in rows]
 
     def get_roads(self, district_id: str, lat: float = None, lon: float = None, radius_km: float = 2.0) -> list[Road]:
-        stmt = select(roads).where(roads.c.district_id == district_id)
+        stmt = select(roads, text("ST_AsText(roads.geometry) AS geometry_wkt")).where(roads.c.district_id == district_id)
         rows = self._execute_fetchall(stmt)
         return [self._row_to_road(r) for r in rows]
 
@@ -1137,8 +1137,12 @@ class PostgresRepository(DataRepository):
     def _row_to_road(self, row) -> Road:
         # Extract geometry coordinates from PostGIS if available
         geometry_coords = []
-        geom = getattr(row, 'geometry', None)
-        if geom is not None:
+        geometry_wkt = getattr(row, 'geometry_wkt', None)
+        if geometry_wkt:
+            geometry_coords = _parse_linestring_coords(geometry_wkt)
+        else:
+            geom = getattr(row, 'geometry', None)
+        if not geometry_coords and geom is not None:
             try:
                 from geoalchemy2 import WKBElement
                 if isinstance(geom, WKBElement):

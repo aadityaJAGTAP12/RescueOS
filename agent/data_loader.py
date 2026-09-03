@@ -80,15 +80,22 @@ def get_flood_data(district_id: str = None, observed_at: str = None) -> dict:
 
     Returns: GeoJSON FeatureCollection dict
     """
-    if district_id is not None:
-        try:
-            from agent.data.repository import get_repository
-            repo = get_repository()
+    try:
+        from agent.data.repository import get_repository
+        repo = get_repository()
+        if district_id is not None:
             snapshot = repo.get_latest_flood_snapshot(district_id, observed_at=observed_at)
             if snapshot and snapshot.geometry_geojson:
                 return snapshot.geometry_geojson
-        except Exception:
-            pass
+        else:
+            features = []
+            for snapshot in repo.list_flood_snapshots(observed_after=observed_at):
+                if snapshot.geometry_geojson:
+                    features.extend(snapshot.geometry_geojson.get("features", []))
+            if features:
+                return {"type": "FeatureCollection", "features": features}
+    except Exception:
+        pass
     return FLOOD_DATA
 
 

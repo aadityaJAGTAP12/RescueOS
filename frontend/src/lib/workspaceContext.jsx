@@ -6,11 +6,13 @@ import { createContext, useContext, useReducer, useCallback, useEffect, useRef }
 
 const initialLayers = {
   flood: true,
+  floodHistory: false,
   roads: true,
   bridges: true,
   settlements: true,
   buildings: false,
   medical: true,
+  organizations: false,
   needs: true,
   offers: false,
   operations: true,
@@ -49,6 +51,10 @@ const initialState = {
   settlements: [],
   roads: [],
   bridges: [],
+  medicalFacilities: [],
+  buildings: [],
+  buildingsMeta: null,
+  organizations: [],
   needs: [],
   offers: [],
   operations: [],
@@ -56,6 +62,10 @@ const initialState = {
   overrides: {},
   activity: [],
   notifications: [],
+  incidents: [],
+  floodSnapshots: [],
+  selectedFloodSnapshot: null,
+  selectedFloodData: null,
 
   // AI Coordinator
   aiAnalysis: null,
@@ -79,11 +89,15 @@ const initialState = {
     settlements: false,
     roads: false,
     bridges: false,
+    medicalFacilities: false,
+    buildings: false,
+    organizations: false,
     needs: false,
     offers: false,
     operations: false,
     fieldReports: false,
     activity: false,
+    floodSnapshots: false,
   },
 };
 
@@ -135,6 +149,21 @@ function workspaceReducer(state, action) {
     case "SET_FLOOD_DATA":
       return { ...state, floodData: action.payload, loading: { ...state.loading, flood: false } };
 
+    case "SET_BUILDINGS":
+      return { ...state, buildings: action.payload.features || [], buildingsMeta: action.payload.meta || null, loading: { ...state.loading, buildings: false } };
+
+    case "SET_ORGANIZATIONS":
+      return { ...state, organizations: action.payload, loading: { ...state.loading, organizations: false } };
+
+    case "SET_INCIDENTS":
+      return { ...state, incidents: action.payload };
+
+    case "SET_FLOOD_SNAPSHOTS":
+      return { ...state, floodSnapshots: action.payload, loading: { ...state.loading, floodSnapshots: false } };
+
+    case "SET_SELECTED_FLOOD_SNAPSHOT":
+      return { ...state, selectedFloodSnapshot: action.payload.snapshot, selectedFloodData: action.payload.data };
+
     case "SET_DISTRICTS":
       return { ...state, districts: action.payload, loading: { ...state.loading, districts: false } };
 
@@ -146,6 +175,9 @@ function workspaceReducer(state, action) {
 
     case "SET_BRIDGES":
       return { ...state, bridges: action.payload, loading: { ...state.loading, bridges: false } };
+
+    case "SET_MEDICAL_FACILITIES":
+      return { ...state, medicalFacilities: action.payload, loading: { ...state.loading, medicalFacilities: false } };
 
     case "SET_NEEDS":
       return { ...state, needs: action.payload, loading: { ...state.loading, needs: false } };
@@ -264,36 +296,130 @@ export function WorkspaceProvider({ children }) {
   const fetchRoads = useCallback(async (districtId) => {
     dispatch({ type: "SET_LOADING", payload: { key: "roads", value: true } });
     try {
-      if (!districtId) {
-        dispatch({ type: "SET_ROADS", payload: [] });
-        return;
-      }
-      const resp = await fetch(`/api/districts/${districtId}/roads`);
-      if (resp.ok) {
-        const data = await resp.json();
-        dispatch({ type: "SET_ROADS", payload: data.roads || [] });
-      }
+      const districts = districtId ? [districtId] : state.districts.map((d) => d.id);
+      const responses = await Promise.all(districts.map((id) => fetch(`/api/districts/${id}/roads`)));
+      const data = await Promise.all(responses.filter((resp) => resp.ok).map((resp) => resp.json()));
+      dispatch({ type: "SET_ROADS", payload: data.flatMap((item) => item.roads || []) });
     } catch (err) {
       console.error("Failed to fetch roads:", err);
       dispatch({ type: "SET_LOADING", payload: { key: "roads", value: false } });
     }
-  }, []);
+  }, [state.districts]);
 
   const fetchBridges = useCallback(async (districtId) => {
     dispatch({ type: "SET_LOADING", payload: { key: "bridges", value: true } });
     try {
-      if (!districtId) {
-        dispatch({ type: "SET_BRIDGES", payload: [] });
-        return;
-      }
-      const resp = await fetch(`/api/districts/${districtId}/bridges`);
-      if (resp.ok) {
-        const data = await resp.json();
-        dispatch({ type: "SET_BRIDGES", payload: data.bridges || [] });
-      }
+      const districts = districtId ? [districtId] : state.districts.map((d) => d.id);
+      const responses = await Promise.all(districts.map((id) => fetch(`/api/districts/${id}/bridges`)));
+      const data = await Promise.all(responses.filter((resp) => resp.ok).map((resp) => resp.json()));
+      dispatch({ type: "SET_BRIDGES", payload: data.flatMap((item) => item.bridges || []) });
     } catch (err) {
       console.error("Failed to fetch bridges:", err);
       dispatch({ type: "SET_LOADING", payload: { key: "bridges", value: false } });
+    }
+  }, [state.districts]);
+
+  const fetchMedicalFacilities = useCallback(async (districtId) => {
+    dispatch({ type: "SET_LOADING", payload: { key: "medicalFacilities", value: true } });
+    try {
+      const districts = districtId ? [districtId] : state.districts.map((d) => d.id);
+      const responses = await Promise.all(districts.map((id) => fetch(`/api/districts/${id}/medical-facilities`)));
+      const data = await Promise.all(responses.filter((resp) => resp.ok).map((resp) => resp.json()));
+      dispatch({ type: "SET_MEDICAL_FACILITIES", payload: data.flatMap((item) => item.facilities || []) });
+    } catch (err) {
+      console.error("Failed to fetch medical facilities:", err);
+      dispatch({ type: "SET_LOADING", payload: { key: "medicalFacilities", value: false } });
+    }
+  }, [state.districts]);
+
+  const fetchBuildings = useCallback(async (districtId, bbox, zoom) => {
+    dispatch({ type: "SET_LOADING", payload: { key: "buildings", value: true } });
+    try {
+      let url = districtId
+        ? `/api/districts/${districtId}/buildings`
+        : `/api/districts/sivasagar/buildings`; // fallback
+      const params = new URLSearchParams();
+      if (bbox) {
+        params.set("west", bbox.west);
+        params.set("south", bbox.south);
+        params.set("east", bbox.east);
+        params.set("north", bbox.north);
+      }
+      if (zoom != null) params.set("zoom", zoom);
+      const qs = params.toString();
+      if (qs) url += `?${qs}`;
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const data = await resp.json();
+        dispatch({ type: "SET_BUILDINGS", payload: data });
+      } else {
+        dispatch({ type: "SET_LOADING", payload: { key: "buildings", value: false } });
+      }
+    } catch (err) {
+      console.error("Failed to fetch buildings:", err);
+      dispatch({ type: "SET_LOADING", payload: { key: "buildings", value: false } });
+    }
+  }, []);
+
+  const fetchOrganizations = useCallback(async () => {
+    dispatch({ type: "SET_LOADING", payload: { key: "organizations", value: true } });
+    try {
+      const resp = await fetch("/api/organizations");
+      if (resp.ok) {
+        const data = await resp.json();
+        dispatch({ type: "SET_ORGANIZATIONS", payload: data.organizations || [] });
+      } else {
+        dispatch({ type: "SET_LOADING", payload: { key: "organizations", value: false } });
+      }
+    } catch (err) {
+      console.error("Failed to fetch organizations:", err);
+      dispatch({ type: "SET_LOADING", payload: { key: "organizations", value: false } });
+    }
+  }, []);
+
+  const fetchIncidents = useCallback(async () => {
+    try {
+      const resp = await fetch("/api/incidents");
+      if (resp.ok) {
+        const data = await resp.json();
+        dispatch({ type: "SET_INCIDENTS", payload: data.incidents || [] });
+      }
+    } catch (err) {
+      console.error("Failed to fetch incidents:", err);
+    }
+  }, []);
+
+  const fetchFloodSnapshots = useCallback(async (districtId) => {
+    dispatch({ type: "SET_LOADING", payload: { key: "floodSnapshots", value: true } });
+    try {
+      const url = districtId
+        ? `/api/flood-snapshots?district=${districtId}`
+        : "/api/flood-snapshots";
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const data = await resp.json();
+        dispatch({ type: "SET_FLOOD_SNAPSHOTS", payload: data.snapshots || [] });
+      } else {
+        dispatch({ type: "SET_LOADING", payload: { key: "floodSnapshots", value: false } });
+      }
+    } catch (err) {
+      console.error("Failed to fetch flood snapshots:", err);
+      dispatch({ type: "SET_LOADING", payload: { key: "floodSnapshots", value: false } });
+    }
+  }, []);
+
+  const selectFloodSnapshot = useCallback(async (snapshot) => {
+    dispatch({ type: "SET_SELECTED_FLOOD_SNAPSHOT", payload: { snapshot, data: null } });
+    if (snapshot && snapshot.id) {
+      try {
+        const resp = await fetch(`/api/flood-snapshots/${snapshot.id}/geojson`);
+        if (resp.ok) {
+          const data = await resp.json();
+          dispatch({ type: "SET_SELECTED_FLOOD_SNAPSHOT", payload: { snapshot, data } });
+        }
+      } catch (err) {
+        console.error("Failed to fetch flood snapshot geojson:", err);
+      }
     }
   }, []);
 
@@ -437,6 +563,47 @@ export function WorkspaceProvider({ children }) {
     }
   }, []);
 
+  // --- Refresh all operational data ---
+  // NOTE: Must be defined AFTER all fetch functions (was causing TDZ crash)
+  const refreshAll = useCallback(async () => {
+    const districtId = state.filters.district;
+    await Promise.allSettled([
+      fetchFloodData(districtId),
+      fetchRoads(districtId),
+      fetchBridges(districtId),
+      fetchMedicalFacilities(districtId),
+      fetchNeeds(state.filters),
+      fetchOffers(state.filters),
+      fetchOperations(state.filters),
+      fetchFieldReports(),
+      fetchOverrides(),
+      fetchActivity(),
+      fetchNotifications(),
+      fetchAiAnalysis(),
+      fetchDelta(),
+      fetchOrganizations(),
+      fetchIncidents(),
+      fetchFloodSnapshots(districtId),
+    ]);
+  }, [
+    state.filters,
+    fetchFloodData,
+    fetchRoads,
+    fetchBridges,
+    fetchMedicalFacilities,
+    fetchNeeds,
+    fetchOffers,
+    fetchOperations,
+    fetchFieldReports,
+    fetchOverrides,
+    fetchActivity,
+    fetchNotifications,
+    fetchAiAnalysis,
+    fetchOrganizations,
+    fetchIncidents,
+    fetchFloodSnapshots,
+  ]);
+
   const setSelectedEntity = useCallback((entity) => {
     dispatch({ type: "SET_SELECTED_ENTITY", payload: entity });
   }, []);
@@ -493,42 +660,23 @@ export function WorkspaceProvider({ children }) {
     });
 
     // Search medical facilities
-    // (stored in overrides, but we can search settlements too)
+    state.medicalFacilities.forEach((f) => {
+      if (f.name && f.name.toLowerCase().includes(q)) {
+        results.push({ type: "facility", id: f.id, name: f.name, icon: "Stethoscope", lat: f.lat, lon: f.lon, data: f });
+      }
+    });
+
+    // Search organizations
+    state.organizations.forEach((o) => {
+      if (o.name && o.name.toLowerCase().includes(q)) {
+        results.push({ type: "organization", id: o.id, name: o.name, icon: "Globe", data: o });
+      }
+    });
 
     dispatch({ type: "SET_SEARCH_RESULTS", payload: results.slice(0, 20) });
-  }, [state.districts, state.settlements, state.needs, state.operations, state.roads, state.bridges]);
+  }, [state.districts, state.settlements, state.needs, state.operations, state.roads, state.bridges, state.medicalFacilities, state.organizations]);
 
-  // --- Refresh all operational data ---
-  const refreshAll = useCallback(async () => {
-    const districtId = state.filters.district;
-    await Promise.allSettled([
-      fetchFloodData(districtId),
-      fetchRoads(districtId),
-      fetchBridges(districtId),
-      fetchNeeds(state.filters),
-      fetchOffers(state.filters),
-      fetchOperations(state.filters),
-      fetchFieldReports(),
-      fetchOverrides(),
-      fetchActivity(),
-      fetchNotifications(),
-      fetchAiAnalysis(),
-      fetchDelta(),
-    ]);
-  }, [
-    state.filters,
-    fetchFloodData,
-    fetchRoads,
-    fetchBridges,
-    fetchNeeds,
-    fetchOffers,
-    fetchOperations,
-    fetchFieldReports,
-    fetchOverrides,
-    fetchActivity,
-    fetchNotifications,
-    fetchAiAnalysis,
-  ]);
+
 
   // --- Initial data load ---
   useEffect(() => {
@@ -545,6 +693,8 @@ export function WorkspaceProvider({ children }) {
       fetchNotifications();
       fetchAiAnalysis();
       fetchDelta();
+      fetchIncidents();
+      fetchOrganizations();
     }, 30000);
 
     return () => {
@@ -559,10 +709,12 @@ export function WorkspaceProvider({ children }) {
     fetchSettlements(districtId);
     fetchRoads(districtId);
     fetchBridges(districtId);
+    fetchMedicalFacilities(districtId);
     fetchNeeds(state.filters);
     fetchOffers(state.filters);
     fetchOperations(state.filters);
-  }, [state.filters, fetchFloodData, fetchSettlements, fetchRoads, fetchBridges, fetchNeeds, fetchOffers, fetchOperations]);
+    fetchFloodSnapshots(districtId);
+  }, [state.filters, state.districts, fetchFloodData, fetchSettlements, fetchRoads, fetchBridges, fetchMedicalFacilities, fetchNeeds, fetchOffers, fetchOperations, fetchFloodSnapshots]);
 
   // --- Action helpers ---
   const toggleLayer = useCallback((layerId) => {
@@ -599,6 +751,8 @@ export function WorkspaceProvider({ children }) {
     fetchFloodData,
     fetchRoads,
     fetchBridges,
+    fetchMedicalFacilities,
+    fetchBuildings,
     fetchNeeds,
     fetchOffers,
     fetchOperations,
@@ -608,6 +762,10 @@ export function WorkspaceProvider({ children }) {
     fetchNotifications,
     fetchAiAnalysis,
     fetchDelta,
+    fetchOrganizations,
+    fetchIncidents,
+    fetchFloodSnapshots,
+    selectFloodSnapshot,
   };
 
   return (

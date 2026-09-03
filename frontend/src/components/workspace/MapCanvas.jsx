@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useCallback } from "react";
+import { useEffect, useMemo, useCallback, useRef } from "react";
 import {
   MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap,
 } from "react-leaflet";
@@ -85,6 +85,22 @@ function FlyTo({ center, zoom }) {
       map.flyTo(center, zoom || map.getZoom(), { duration: 1.0 });
     }
   }, [center, zoom, map]);
+  return null;
+}
+
+// -------------------------------------------------------------------
+// Map moveend handler for viewport-aware loading
+// -------------------------------------------------------------------
+
+function MapMoveHandler({ onMoveEnd }) {
+  const map = useMap();
+  useEffect(() => {
+    const handler = () => {
+      if (onMoveEnd) onMoveEnd(map);
+    };
+    map.on("moveend", handler);
+    return () => map.off("moveend", handler);
+  }, [map, onMoveEnd]);
   return null;
 }
 
@@ -394,7 +410,32 @@ export default function MapCanvas() {
     openPanel,
     setFilter,
     fetchFieldReports,
+    fetchBuildings,
   } = useWorkspace();
+
+  // Viewport-aware building loading
+  const handleMapMoveEnd = useCallback((map) => {
+    if (!state.layers.buildings) return;
+    if (!map) return;
+    const bounds = map.getBounds();
+    const zoom = map.getZoom();
+    const districtId = state.filters.district || (state.districts.length > 0 ? state.districts[0].id : null);
+    if (!districtId) return;
+    const bbox = {
+      west: bounds.getWest(),
+      south: bounds.getSouth(),
+      east: bounds.getEast(),
+      north: bounds.getNorth(),
+    };
+    fetchBuildings(districtId, bbox, zoom);
+  }, [state.layers.buildings, state.filters.district, state.districts, fetchBuildings]);
+
+  // Load buildings when layer is toggled on
+  useEffect(() => {
+    if (state.layers.buildings && state.districts.length > 0) {
+      handleMapMoveEnd();
+    }
+  }, [state.layers.buildings, state.districts.length]);
 
   // Handle map object click → open context panel
   const handleObjectClick = useCallback(
@@ -489,9 +530,10 @@ export default function MapCanvas() {
 
         <FlyTo center={center} zoom={zoom} />
         <RightClickHandler onReportAt={handleReportAt} />
+        <MapMoveHandler onMoveEnd={handleMapMoveEnd} />
 
-        {/* Flood layer */}
-        {state.layers.flood && state.floodData && (
+        {/* Flood layer (current / default) */}
+        {state.layers.flood && !state.layers.floodHistory && state.floodData && (
           <GeoJSON
             key="flood"
             data={state.floodData}
@@ -499,9 +541,18 @@ export default function MapCanvas() {
           />
         )}
 
+        {/* Flood History layer (selected snapshot) */}
+        {state.layers.floodHistory && state.selectedFloodData && (
+          <GeoJSON
+            key={`flood-history-${state.selectedFloodSnapshot?.id}`}
+            data={state.selectedFloodData}
+            style={() => ({ ...floodStyle, fillColor: "#0e7490", color: "#0e7490" })}
+          />
+        )}
+
         {/* Roads layer */}
         <RoadLayer
-          roads={state.roads}
+          roads={state.roads.filter((road) => state.layers.bridges || !road.is_bridge)}
           overrides={state.overrides}
           visible={state.layers.roads || state.layers.bridges}
           onRoadClick={(roadProps) => handleObjectClick("road", roadProps.id, roadProps)}
@@ -514,6 +565,17 @@ export default function MapCanvas() {
               key={s.id}
               settlement={s}
               onClick={handleObjectClick}
+            />
+          ))}
+
+        {/* Buildings layer (viewport-bounded point markers) */}
+        {state.layers.buildings && state.buildings.length > 0 &&
+          state.buildings.slice(0, 2000).map((b) => (
+            <Marker
+              key={b.id}
+              position={[b.geometry.coordinates[1], b.geometry.coordinates[0]]}
+              icon={createSquareIcon(b.properties?.in_flood_zone ? "#dc2626" : "#a8a29e", 6)}
+              eventHandlers={{ click: () => handleObjectClick("building", b.id, { id: b.id, ...b.properties }) }}
             />
           ))}
 
@@ -538,6 +600,36 @@ export default function MapCanvas() {
           visibleOffers.map((offer) => (
             <OfferMarker key={offer.id} offer={offer} onClick={handleObjectClick} />
           ))}
+
+        {/* Medical facilities layer */}
+        {state.layers.medical && state.medicalFacilities.map((facility) => (
+          <FacilityMarker
+            key={facility.id}
+            facility={facility}
+            override={state.overrides[facility.id]}
+            onClick={handleObjectClick}
+          />
+        ))}
+
+        {/* Organizations layer */}
+        {state.layers.organizations && state.organizations.map((org) => (
+          <Marker
+            key={org.id}
+            position={[26.98, 94.66]} // organizations may not have coordinates — show at district center
+            icon={createCircleIcon("#2563eb", 16)}
+            eventHandlers={{ click: () => handleObjectClick("organization", org.id, org) }}
+          >
+            <Popup>
+              <div className="p-2 min-w-[180px]">
+                <div className="text-[13px] font-semibold text-stone-800 mb-1">{org.name}</div>
+                <div className="text-[11px] text-stone-500">{org.organization_type}</div>
+                {org.description && (
+                  <div className="text-[10px] text-stone-400 mt-1">{org.description}</div>
+                )}
+              </div>
+            </Popup>
+          </Marker>
+        ))}
 
         {/* Field reports layer */}
         {state.layers.fieldReports &&
@@ -579,7 +671,14 @@ export default function MapCanvas() {
       {/* Map overlay: data status */}
       <div className="absolute bottom-2 left-2 z-[1000] flex items-center gap-2 px-2 py-1 bg-[#0f1419]/90 backdrop-blur-sm rounded border border-[#2a3a4e]">
         <div className="text-[10px] text-[#6b7d93]">
-          {state.roads.length} roads · {state.needs.length} needs · {state.operations.length} ops · {state.offers.length} offers
+          {state.roads.length} roads · {state.bridges.length} bridges · {state.medicalFacilities.length} medical · {state.settlements.length} settlements
+          {state.buildingsMeta && state.buildingsMeta.truncated && (
+            <span className="text-[#4a5568]"> · {state.buildingsMeta.total_available} buildings (showing {state.buildingsMeta.returned})</span>
+          )}
+          {state.buildingsMeta && !state.buildingsMeta.truncated && (
+            <span> · {state.buildingsMeta.total_available} buildings</span>
+          )}
+          {" · "}{state.needs.length} needs · {state.operations.length} ops · {state.offers.length} offers
         </div>
       </div>
     </div>
