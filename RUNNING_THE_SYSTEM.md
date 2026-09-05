@@ -1,11 +1,11 @@
 # Running ReliefOS — Complete System Guide
 
-## Quick Start (3 terminals)
+## Quick Start (Windows)
 
 ```bash
-# Terminal 1: Flask API backend (port 5001)
+# Terminal 1: starts/reuses PostGIS, initializes persistent data, and runs Flask
 cd RescueOS
-python -m agent.api
+start_backend.bat
 
 # Terminal 2: React frontend dev server (port 3000)
 cd RescueOS/frontend
@@ -18,6 +18,8 @@ python agent/main.py         # run the standalone demo
 ```
 
 **That's it.** Ollama must be running for the LLM features (query parser, field intelligence extraction). The deterministic path (assessment, priority, allocation) works without Ollama.
+
+The backend launcher is the required startup path on Windows. It anchors itself to the project directory, starts or reuses the PostGIS container, waits for PostgreSQL readiness, verifies the schema and persistent data, and only then starts the API. The database uses `localhost:5433`.
 
 ## URLs
 

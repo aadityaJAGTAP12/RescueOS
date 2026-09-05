@@ -1396,7 +1396,7 @@ function CreateReportForm({ defaultData, onClose }) {
 // -------------------------------------------------------------------
 
 function CreateOfferForm({ onClose }) {
-  const { refreshAll } = useWorkspace();
+  const { state, refreshAll } = useWorkspace();
   const [form, setForm] = useState({
     resource_type: "boat",
     quantity: 1,
@@ -1405,7 +1405,7 @@ function CreateOfferForm({ onClose }) {
     lat: "",
     lon: "",
     notes: "",
-    organization_id: "anonymous",
+    organization_id: "org_reliefos_default",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -1450,6 +1450,24 @@ function CreateOfferForm({ onClose }) {
         color="#0d9488"
       />
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-3">
+        <Field label="Organization">
+          <select
+            value={form.organization_id}
+            onChange={(e) => setForm({ ...form, organization_id: e.target.value })}
+            className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] outline-none"
+            required
+          >
+            {state.organizations.length === 0 ? (
+              <option value="org_reliefos_default">ReliefOS Coordination Cell</option>
+            ) : (
+              state.organizations.map((organization) => (
+                <option key={organization.id} value={organization.id}>
+                  {organization.name}
+                </option>
+              ))
+            )}
+          </select>
+        </Field>
         <Field label="Resource Type">
           <select
             value={form.resource_type}

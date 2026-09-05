@@ -229,7 +229,7 @@ The most likely scenario is that the **Docker container was previously running o
 If the database needs to be rebuilt:
 1. Start Docker: `docker compose up -d`
 2. Set port correctly (5432 per docker-compose.yml, or update docker-compose to 5433)
-3. Run: `export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5432/reliefos`
+3. Run: `export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos`
 4. Initialize: `python scripts/db_init.py` (creates tables + imports flood/reports/overrides)
 5. Download PBF file to `data/raw/osm/`
 6. Run OSM ingestion: `python -m scripts.ingest.osm_pbf`

@@ -1074,17 +1074,28 @@ def api_create_offer():
     try:
         import uuid
         from agent.data.repository import get_repository
-        from agent.data.models import ResourceOffer, ActivityEvent
+        from agent.data.models import ResourceOffer, ActivityEvent, Organization
         repo = get_repository()
 
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
 
+        organization_id = payload.get("organization_id") or "org_reliefos_default"
+        if not payload.get("organization_id") and not repo.get_organization(organization_id):
+            repo.create_organization(Organization(
+                id=organization_id,
+                name="ReliefOS Coordination Cell",
+                organization_type="coordinator",
+                description="Default local organization for ReliefOS workspace actions.",
+            ))
+        if not repo.get_organization(organization_id):
+            return jsonify({"error": f"Organization not found: {organization_id}"}), 400
+
         offer_id = f"offer_{str(uuid.uuid4())[:8]}"
         offer = ResourceOffer(
             id=offer_id,
-            organization_id=payload.get("organization_id", "anonymous"),
+            organization_id=organization_id,
             resource_type=payload.get("resource_type", "other"),
             quantity=payload.get("quantity", 0),
             unit=payload.get("unit", "units"),
@@ -1102,7 +1113,7 @@ def api_create_offer():
             entity_type="resource_offer",
             entity_id=offer_id,
             event_type="resource_offered",
-            actor=payload.get("organization_id", "anonymous"),
+            actor=organization_id,
             detail=f"Resource offer published: {offer.quantity} {offer.resource_type}",
         ))
 

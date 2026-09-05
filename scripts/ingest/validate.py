@@ -9,7 +9,7 @@ Validates that OSM PBF ingestion produced correct, complete data:
   - Sanity checks (nonzero data in all 4 districts)
 
 Usage:
-    export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5432/reliefos
+    export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos
     python -m scripts.ingest.validate
 """
 

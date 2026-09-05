@@ -1,0 +1,253 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-09-04T10:00:21Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+    {
+      "type": "node",
+      "id": 6913293273,
+      "lat": 27.1857364,
+      "lon": 94.913941,
+      "tags": {
+        "addr:district": "Sivasagar",
+        "addr:full": "A.T.Road, Pioli Nagar",
+        "addr:postcode": "785670",
+        "addr:state": "Assam",
+        "amenity": "hospital",
+        "contact:phone": "3754226604",
+        "name": "H M Hospital and Research Center",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745407,
+      "lat": 27.108545,
+      "lon": 95.03788,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Bahboria Pathar, Near Deepling Tea Estate Factory",
+        "addr:postcode": "785670",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Mahmora",
+        "amenity": "hospital",
+        "name": "Deepling Tea Estate Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745424,
+      "lat": 27.1763415,
+      "lon": 94.9448362,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Aamguri-Chhakalia Road, Near Khumtai Factory",
+        "addr:postcode": "786613",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Mahmora",
+        "amenity": "hospital",
+        "name": "Khumtai Tea Estate Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745467,
+      "lat": 27.0903275,
+      "lon": 94.8081909,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Borbham Road, Kathalbari",
+        "addr:postcode": "785674",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Dimow",
+        "amenity": "hospital",
+        "name": "Mohokutie Tea Estate Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745476,
+      "lat": 27.018378,
+      "lon": 95.043379,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Namtola-Mon Road, Near Radha Krishna Mandir, Jaboka",
+        "addr:postcode": "785690",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Sonari",
+        "amenity": "hospital",
+        "name": "Jaboka Tea Estate Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745481,
+      "lat": 27.181087,
+      "lon": 94.911762,
+      "tags": {
+        "addr:district": "Dibrugarh",
+        "addr:full": "Moranhat",
+        "addr:postcode": "785670",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Moran",
+        "amenity": "hospital",
+        "name": "Moranhat Government Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745488,
+      "lat": 27.032335,
+      "lon": 95.058492,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Dhodar Ali, Rajapukhuri Sonari, Near Fire Brigade Station",
+        "addr:postcode": "785694",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Sonari",
+        "amenity": "hospital",
+        "contact:phone": "03772-256778",
+        "description": "Civil Hospital",
+        "name": "Sonari Civil Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745503,
+      "lat": 27.127612,
+      "lon": 94.739596,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Khara Haat-Demow Road, Sivasagar, Near Demow Higher Secondary School",
+        "addr:postcode": "785662",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Dimow",
+        "amenity": "hospital",
+        "description": "Community Health Centre",
+        "healthcare": "centre",
+        "name": "CHC, Demow",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745507,
+      "lat": 27.0258483,
+      "lon": 94.8284735,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Sagar-Berra Road, Near Post Office, Patsaku",
+        "addr:postcode": "785673",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Dimow",
+        "amenity": "hospital",
+        "name": "Patsaku Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745530,
+      "lat": 27.148293,
+      "lon": 94.936707,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Chutia Gaon, Near Radha Krishna Mandir",
+        "addr:postcode": "785670",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Mahmora",
+        "amenity": "hospital",
+        "name": "Hingrijan Tea Estate Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7150745547,
+      "lat": 27.048248,
+      "lon": 94.914828,
+      "tags": {
+        "addr:district": "Sibsagar",
+        "addr:full": "Desangpani",
+        "addr:postcode": "785689",
+        "addr:state": "Assam",
+        "amenity": "clinic",
+        "description": "Dispensaries",
+        "health_facility:type": "dispensary",
+        "healthcare": "centre",
+        "name": "Dhemaji Desangpani State Dispensary",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7532350944,
+      "lat": 27.0296395,
+      "lon": 95.0137901,
+      "tags": {
+        "addr:district": "Charaideo",
+        "addr:full": "Sonari",
+        "addr:postcode": "785690",
+        "addr:state": "Assam",
+        "amenity": "clinic",
+        "healthcare": "clinic",
+        "name": "KONOKLOTA MEMORIAL HOSPITAL",
+        "source": "Local Knowledge"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7532350957,
+      "lat": 27.197128,
+      "lon": 94.9095726,
+      "tags": {
+        "addr:district": "Dibrugarh",
+        "addr:full": "Teloibari Block Gaon",
+        "addr:postcode": "785675",
+        "addr:state": "Assam",
+        "amenity": "clinic",
+        "name": "Doctor's Chamber & Pharmacy",
+        "source": "Local Knowledge"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7532350988,
+      "lat": 27.0261774,
+      "lon": 95.0183865,
+      "tags": {
+        "addr:district": "Charaideo",
+        "addr:full": "Dhodar Ali Road, Sonari",
+        "addr:postcode": "785690",
+        "addr:state": "Assam",
+        "amenity": "hospital",
+        "name": "Sonari Town Hospital",
+        "source": "Local Knowledge"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7532351020,
+      "lat": 27.03222,
+      "lon": 95.058501,
+      "tags": {
+        "addr:district": "Charaideo",
+        "addr:full": "Dhodar Ali Road, Sonari",
+        "addr:postcode": "785691",
+        "addr:state": "Assam",
+        "amenity": "hospital",
+        "name": "Rajapukhuri Hospital",
+        "source": "Local Knowledge"
+      }
+    }
+  ]
+}

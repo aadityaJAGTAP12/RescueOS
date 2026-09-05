@@ -1,0 +1,149 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-09-04T10:23:51Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+    {
+      "type": "node",
+      "id": 6913288175,
+      "lat": 26.5914174,
+      "lon": 93.7494734,
+      "tags": {
+        "addr:district": "Golaghat",
+        "addr:full": "Nrl Township. Post : Numaligarh Refinery Complex",
+        "addr:postcode": "785699",
+        "addr:state": "Assam",
+        "amenity": "hospital",
+        "name": "Vivekananda Kendra-Nrl Hospital",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7153255029,
+      "lat": 26.423051,
+      "lon": 93.7449144,
+      "tags": {
+        "addr:district": "Karbi Anglong",
+        "addr:full": "Near Chowkihola Dev Block",
+        "addr:postcode": "782480",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Silonijan",
+        "amenity": "clinic",
+        "description": "Primary Health Centre",
+        "healthcare": "centre",
+        "name": "BPHC, Chowkihola",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7153386682,
+      "lat": 26.555335,
+      "lon": 93.514024,
+      "tags": {
+        "addr:district": "Karbi Anglong",
+        "addr:full": "Malasipathar-Dolamara Road, Malasipathar High School",
+        "addr:postcode": "782481",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Silonijan",
+        "amenity": "clinic",
+        "description": "Primary Health Centre",
+        "healthcare": "centre",
+        "name": "Malasipathar MPHC",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7153386759,
+      "lat": 26.618207,
+      "lon": 93.55287,
+      "tags": {
+        "addr:district": "Karbi Anglong",
+        "addr:full": "Bukakhat-Dolamara Road, NH39 to Dolamara",
+        "addr:postcode": "785612",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Silonijan",
+        "amenity": "clinic",
+        "description": "Primary Health Centre",
+        "healthcare": "centre",
+        "name": "Dolamara MPHC",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7153386791,
+      "lat": 26.5759294,
+      "lon": 93.7200774,
+      "tags": {
+        "addr:district": "Karbi Anglong",
+        "addr:full": "Deithor-Chowkihola Road, Deithor",
+        "addr:postcode": "782480",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Silonijan",
+        "amenity": "clinic",
+        "description": "Primary Health Centre",
+        "healthcare": "centre",
+        "name": "Deithor MPHC",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7153386825,
+      "lat": 26.485704,
+      "lon": 93.787531,
+      "tags": {
+        "addr:district": "Golaghat",
+        "addr:full": "Napam gaon, Bokial",
+        "addr:postcode": "785613",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Morangi",
+        "amenity": "clinic",
+        "description": "Primary Health Centre",
+        "healthcare": "centre",
+        "name": "Naharchalla MPHC",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7153386832,
+      "lat": 26.5746196,
+      "lon": 93.7654295,
+      "tags": {
+        "addr:district": "Golaghat",
+        "addr:full": "Ponka",
+        "addr:postcode": "782470",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Morangi",
+        "amenity": "clinic",
+        "description": "Primary Health Centre",
+        "healthcare": "centre",
+        "name": "Ponka MPHC",
+        "source": "OpenGovernmentData"
+      }
+    },
+    {
+      "type": "node",
+      "id": 7153386874,
+      "lat": 26.641792,
+      "lon": 93.598697,
+      "tags": {
+        "addr:district": "Golaghat",
+        "addr:full": "Kalakhowa",
+        "addr:postcode": "785612",
+        "addr:state": "Assam",
+        "addr:subdistrict": "Bokakhat",
+        "amenity": "hospital",
+        "name": "Swahid Kamala Miri Civil Hospital Bokakhat",
+        "source": "OpenGovernmentData"
+      }
+    }
+  ]
+}

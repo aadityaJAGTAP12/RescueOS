@@ -9,7 +9,7 @@ Usage:
     docker compose up -d
 
     # 2. Set DATABASE_URL
-    export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5432/reliefos
+    export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos
 
     # 3. Initialize database
     python scripts/db_init.py
@@ -31,12 +31,12 @@ def main():
         print("ERROR: DATABASE_URL not set.")
         print("")
         print("Usage:")
-        print("  export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5432/reliefos")
+        print("  export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos")
         print("  python scripts/db_init.py")
         print("")
         print("Quick start with Docker:")
         print("  docker compose up -d")
-        print("  export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5432/reliefos")
+        print("  export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos")
         print("  python scripts/db_init.py")
         sys.exit(1)
 

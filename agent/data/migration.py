@@ -25,6 +25,7 @@ from typing import Optional
 from agent.data.models import (
     District,
     Settlement,
+    Organization,
     FloodSnapshot,
     FieldReport,
     Override,
@@ -129,6 +130,21 @@ def ensure_districts(repo: DataRepository) -> list[District]:
             created.append(district)
             print(f"  [MIGRATION] Created district: {district.id}")
     return created
+
+
+def ensure_organizations(repo: DataRepository) -> list[Organization]:
+    """Ensure the default local organization exists for authored actions."""
+    default_org = Organization(
+        id="org_reliefos_default",
+        name="ReliefOS Coordination Cell",
+        organization_type="coordinator",
+        description="Default local organization for ReliefOS workspace actions.",
+    )
+    if repo.get_organization(default_org.id) is None:
+        repo.create_organization(default_org)
+        print(f"  [MIGRATION] Created organization: {default_org.id}")
+        return [default_org]
+    return []
 
 
 def migrate_flood_data(repo: DataRepository = None) -> dict[str, Optional[FloodSnapshot]]:
@@ -331,6 +347,9 @@ def run_full_migration(repo: DataRepository = None) -> dict:
 
     # 1. Ensure districts exist
     ensure_districts(repo)
+
+    # 1b. Ensure authored offers have a valid organization owner
+    ensure_organizations(repo)
 
     # 2. Import all 4 flood snapshots
     flood_results = migrate_flood_data(repo)

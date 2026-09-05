@@ -3,7 +3,7 @@
 #
 # Usage:
 #   docker compose up -d
-#   export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5432/reliefos
+#   export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos
 #   python -m agent.data.schema   # creates tables
 #   python -m agent.data.migration  # imports data
 
@@ -16,7 +16,7 @@ services:
       POSTGRES_USER: reliefos
       POSTGRES_PASSWORD: reliefos
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - reliefos_pgdata:/var/lib/postgresql/data
     healthcheck:

@@ -732,7 +732,7 @@ def get_repository() -> DataRepository:
     4. Default → InMemoryRepository (safe fallback for dev/tests)
 
     Production config:
-        export DATABASE_URL=postgresql://user:pass@localhost:5432/reliefos
+        export DATABASE_URL=postgresql://user:pass@localhost:5433/reliefos
         python agent/main.py
 
     Test config:

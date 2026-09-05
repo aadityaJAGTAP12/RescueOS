@@ -143,7 +143,10 @@ python agent/main.py
 # Flask API (port 5001)
 python -m agent.api
 
-# React frontend (port 3000)
+# Start the database, initialize persistent data, and run the API (Windows)
+start_backend.bat
+
+# React frontend (port 3000, separate terminal)
 cd frontend && npm run dev
 
 # All 182 tests (no Ollama required, no DB required)
@@ -158,8 +161,8 @@ ReliefOS now supports PostgreSQL + PostGIS as a production data layer.
 # 1. Start PostgreSQL + PostGIS (Docker)
 docker compose up -d
 
-# 2. Set DATABASE_URL
-export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5432/reliefos
+# 2. Set DATABASE_URL (the Windows launcher does this automatically)
+export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos
 
 # 3. Initialize database schema + import data
 python scripts/db_init.py
@@ -351,6 +354,6 @@ python -m pytest tests/test_phase3.py -v         # generalized data foundation
 python -m pytest tests/test_phase4.py -v         # runtime rewired to repository
 
 # PostgreSQL integration tests (requires DATABASE_URL)
-export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5432/reliefos
+export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos
 pytest tests/test_postgres_repository.py -v
 ```
