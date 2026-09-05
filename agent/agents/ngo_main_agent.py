@@ -23,6 +23,9 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
+from agent.matching_core import compare_need_resource
+from agent.reasoning.need_offer_judgment import judge_need_offer
+
 
 # ---------------------------------------------------------------------------
 # Context objects — explicit private/shared separation
@@ -184,6 +187,52 @@ class NGOMainAgent:
         total_available = sum(r.get("quantity", 0) for r in available_resources)
         committed = private_ctx.get_committed_resources()
 
+        # Deterministic facts are kept separate from the advisory interpretation.
+        resource_facts = [
+            compare_need_resource(
+                requested,
+                r.get("type", r.get("resource_type", "")),
+                r.get("quantity", 0),
+                r.get("unit"),
+                need_type,
+            )
+            for r in available_resources
+        ]
+        if resource_facts:
+            first_facts = resource_facts[0]
+            requested_quantity = first_facts.requested_quantity
+            unit_match = all(f.unit_match for f in resource_facts)
+            type_match = all(f.type_match for f in resource_facts)
+        else:
+            empty_facts = compare_need_resource(requested, need_type, 0, None, need_type)
+            requested_quantity = empty_facts.requested_quantity
+            unit_match = empty_facts.unit_match
+            type_match = empty_facts.type_match
+
+        if not type_match or not unit_match:
+            sufficiency = "insufficient"
+        elif requested_quantity is None:
+            sufficiency = "unknown"
+        elif total_available >= requested_quantity:
+            sufficiency = "sufficient"
+        else:
+            sufficiency = "insufficient"
+
+        matching_facts = {
+            "available_quantity": total_available,
+            "requested_quantity": requested_quantity,
+            "requested_quantity_specified": requested_quantity is not None,
+            "unit_match": unit_match,
+            "unit_mismatch": not unit_match,
+            "type_match": type_match,
+            "sufficiency": sufficiency,
+        }
+        judgment = judge_need_offer(
+            matching_facts,
+            title=need_title,
+            description=need.get("description", ""),
+        )
+
         # --- Team Worker analysis ---
         available_teams = private_ctx.get_available_teams()
 
@@ -203,6 +252,13 @@ class NGOMainAgent:
         proposed_publication = None
         action_required = "review"
 
+        if requested_quantity is None:
+            uncertainty.append("Need quantity is unspecified; available quantity is factual, not a confirmed requirement")
+        if not unit_match:
+            uncertainty.append("Need and available resource units do not match")
+        if not type_match:
+            uncertainty.append("Need and available resource types do not match")
+
         if total_available == 0:
             recommendation = f"Cannot respond — no available {need_type} resources."
             why = f"No {need_type} resources in inventory are currently available."
@@ -213,17 +269,18 @@ class NGOMainAgent:
             uncertainty.append("Mission resource requirements may have changed since last update")
         elif available_teams:
             # Can potentially respond
-            offer_qty = min(total_available, requested_qty) if requested_qty > 0 else 1
-            recommendation = f"Can potentially provide {offer_qty} {need_type}(s)."
+            offer_qty = min(total_available, requested_qty) if requested_qty > 0 else total_available
+            unit = available_resources[0].get("unit", "units") if available_resources else "units"
+            recommendation = f"Can potentially provide {offer_qty} {unit} of {need_type}."
             why = (
-                f"{total_available} {need_type}(s) available in inventory. "
+                f"{total_available} {unit} of {need_type} available in inventory. "
                 f"{len(available_teams)} team(s) available. "
                 f"No commitment conflicts detected."
             )
             proposed_publication = {
                 "resource_type": need_type,
                 "quantity": offer_qty,
-                "unit": available_resources[0].get("unit", "units") if available_resources else "units",
+                "unit": unit,
                 "location_name": available_resources[0].get("location") if available_resources else None,
                 "linked_need_id": need_id,
                 "notes": f"Response to: {need_title}",
@@ -245,6 +302,8 @@ class NGOMainAgent:
             "need_type": need_type,
             "recommendation": recommendation,
             "why": why,
+            "matching_facts": matching_facts,
+            "interpretation": judgment["interpretation"],
             "evidence": {
                 "available_resources": len(available_resources),
                 "total_available": total_available,

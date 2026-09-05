@@ -9,6 +9,8 @@ PRIVATE factors never cross the boundary to the network.
 
 from __future__ import annotations
 
+from agent.matching_core import compare_need_resource, types_match
+
 
 def evaluate_coordination(
     proposal: dict,
@@ -40,14 +42,42 @@ def evaluate_coordination(
 
     need_type = proposal.get("proposal_type", "")
     need_id = proposal.get("need_id", "")
+    requested_resources = proposal.get("requested_resources", [])
 
     # Resource assessment
     available_resources = [r for r in resources if r.get("status") == "available"]
-    matching_resources = [
-        r for r in available_resources
-        if _resource_matches_need(r, need_type)
-    ]
+    matching_resources = []
+    resource_facts = []
+    for resource in available_resources:
+        facts = compare_need_resource(
+            requested_resources,
+            resource.get("type", resource.get("resource_type", "")),
+            resource.get("quantity", 0),
+            resource.get("unit"),
+            need_type,
+        )
+        if facts.type_match:
+            matching_resources.append(resource)
+            resource_facts.append(facts)
     total_available = sum(r.get("quantity", 0) for r in matching_resources)
+    requested_quantity = next(
+        (facts.requested_quantity for facts in resource_facts if facts.requested_quantity is not None),
+        None,
+    )
+    unit_match = all(facts.unit_match for facts in resource_facts)
+    matching_facts = {
+        "available_quantity": total_available,
+        "requested_quantity": requested_quantity,
+        "requested_quantity_specified": requested_quantity is not None,
+        "unit_match": unit_match,
+        "unit_mismatch": not unit_match,
+        "type_match": bool(resource_facts),
+        "sufficiency": (
+            "unknown" if requested_quantity is None or not unit_match
+            else "sufficient" if total_available >= requested_quantity
+            else "insufficient"
+        ),
+    }
 
     # Team assessment
     available_teams = [t for t in teams if t.get("status") == "available"]
@@ -67,6 +97,9 @@ def evaluate_coordination(
     private_factors = []
     constraints = []
     recommended_public_action = "No action recommended"
+
+    if not unit_match and resource_facts:
+        constraints.append("Resource and Need units require human verification")
 
     if total_available > 0 and available_teams and not conflicting_missions:
         decision = "SUITABLE"
@@ -116,6 +149,7 @@ def evaluate_coordination(
             "total_resources": len(resources),
             "matching_available": len(matching_resources),
             "total_available_quantity": total_available,
+            "matching_facts": matching_facts,
         },
         "team_assessment": {
             "total_teams": len(teams),
@@ -132,9 +166,4 @@ def _resource_matches_need(resource: dict, need_type: str) -> bool:
     """Check if a resource matches a need type."""
     r_type = resource.get("type", resource.get("resource_type", "")).lower()
     n_type = need_type.lower()
-    if not r_type or not n_type:
-        return False
-    if r_type == n_type or n_type in r_type or r_type in n_type:
-        return True
-    categories = {"boat": "transport", "vehicle": "transport", "medical_team": "medical", "food": "supplies", "water": "supplies"}
-    return categories.get(r_type) == categories.get(n_type) and categories.get(r_type) is not None
+    return types_match(n_type, r_type)

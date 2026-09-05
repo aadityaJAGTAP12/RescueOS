@@ -7,6 +7,8 @@ based on published offers, public organization info, and geographic relevance.
 
 from __future__ import annotations
 
+from agent.matching_core import compare_need_resource, types_match
+
 
 def select_candidates(
     need: dict,
@@ -56,7 +58,7 @@ def select_candidates(
         # Check if any offer matches the need type
         matching_offers = [
             o for o in org_offers
-            if _types_match(need_type, o.resource_type if hasattr(o, 'resource_type') else o.get('resource_type', ''))
+            if types_match(need_type, o.resource_type if hasattr(o, 'resource_type') else o.get('resource_type', ''))
         ]
 
         if not matching_offers:
@@ -94,9 +96,41 @@ def select_candidates(
             o.quantity if hasattr(o, 'quantity') else o.get('quantity', 0)
             for o in matching_offers
         )
+        offer_facts = [
+            compare_need_resource(
+                need.get("requested_resources", []),
+                o.resource_type if hasattr(o, 'resource_type') else o.get('resource_type', ''),
+                o.quantity if hasattr(o, 'quantity') else o.get('quantity', 0),
+                o.unit if hasattr(o, 'unit') else o.get('unit'),
+                need_type,
+            )
+            for o in matching_offers
+        ]
+        requested_quantity = next(
+            (facts.requested_quantity for facts in offer_facts if facts.requested_quantity is not None),
+            None,
+        )
+        unit_match = all(facts.unit_match for facts in offer_facts)
+        matching_facts = {
+            "available_quantity": total_quantity,
+            "requested_quantity": requested_quantity,
+            "requested_quantity_specified": requested_quantity is not None,
+            "unit_match": unit_match,
+            "unit_mismatch": not unit_match,
+            "type_match": all(facts.type_match for facts in offer_facts),
+            "sufficiency": (
+                "unknown" if requested_quantity is None or not unit_match
+                else "sufficient" if total_quantity >= requested_quantity
+                else "insufficient"
+            ),
+        }
         if total_quantity > 0:
             score += 0.2
-            evidence.append(f"{total_quantity} units available (public)")
+            offer_units = sorted({facts.available_unit for facts in offer_facts if facts.available_unit})
+            unit_label = "/".join(offer_units) if offer_units else "units"
+            evidence.append(f"{total_quantity} {unit_label} available (public)")
+        if not unit_match:
+            uncertainty.append("Published offer units do not match the Need unit")
 
         # Previous operations
         org_ops = ops_by_org.get(org_id, [])
@@ -120,6 +154,7 @@ def select_candidates(
             "uncertainty": uncertainty,
             "matching_offers": len(matching_offers),
             "total_public_quantity": total_quantity,
+            "matching_facts": matching_facts,
             "previous_operations": len(org_ops),
         }
 
@@ -138,10 +173,4 @@ def select_candidates(
 
 
 def _types_match(need_type: str, offer_type: str) -> bool:
-    if not need_type or not offer_type:
-        return False
-    n, o = need_type.lower(), offer_type.lower()
-    if n == o or n in o or o in n:
-        return True
-    categories = {"boat": "transport", "vehicle": "transport", "medical_team": "medical", "food": "supplies", "water": "supplies"}
-    return categories.get(n) == categories.get(o) and categories.get(n) is not None
+    return types_match(need_type, offer_type)

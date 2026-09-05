@@ -35,6 +35,11 @@ from agent.data.models import (
     ResourceOffer,
     Provenance,
 )
+from agent.matching_core import (
+    canonical_category,
+    compare_need_resource,
+    types_match,
+)
 
 
 # -----------------------------------------------------------------------
@@ -90,7 +95,7 @@ def _canonical_category(resource_type: str) -> str:
 
     Falls back to the lowercased input if not in the known mapping.
     """
-    return RESOURCE_CATEGORIES.get(resource_type.lower(), resource_type.lower())
+    return canonical_category(resource_type)
 
 
 def _resources_compatible(need_type: str, offer_type: str) -> bool:
@@ -99,18 +104,7 @@ def _resources_compatible(need_type: str, offer_type: str) -> bool:
     Uses canonical categories for comparison, falling back to substring matching
     for partial compatibility.
     """
-    need_cat = _canonical_category(need_type)
-    offer_cat = _canonical_category(offer_type)
-
-    # Exact category match
-    if need_cat == offer_cat:
-        return True
-
-    # Substring containment (e.g., "drinking_water" contains "water")
-    if need_cat in offer_cat or offer_cat in need_cat:
-        return True
-
-    return False
+    return types_match(need_type, offer_type)
 
 
 # -----------------------------------------------------------------------
@@ -127,9 +121,14 @@ class MatchCandidate:
     match_type: str  # "full", "partial", "cross_district"
     reasons: list[str]
     unmet_quantity: int  # 0 = fully satisfied, >0 = partially satisfied
-    requested_quantity: int
+    requested_quantity: int | None
     available_quantity: int
     allocatable_quantity: int  # min(requested, available)
+    requested_quantity_specified: bool
+    unit_match: bool
+    unit_mismatch: bool
+    type_match: bool
+    sufficiency: str
 
 
 # -----------------------------------------------------------------------
@@ -225,10 +224,21 @@ def find_matches_for_need(
             score += 0.15
 
         # Quantity/capacity
-        requested = _extract_quantity(need.requested_resources, need.need_type)
-        available = offer.quantity or 0
+        facts = compare_need_resource(
+            need.requested_resources,
+            offer.resource_type,
+            offer.quantity,
+            offer.unit,
+            need.need_type,
+        )
+        requested = facts.requested_quantity
+        available = facts.available_quantity
 
-        if requested > 0 and available > 0:
+        if facts.unit_mismatch:
+            reasons.append("Unit mismatch: requested and offered units are not equivalent")
+            allocatable = 0
+            unmet = 0
+        elif requested is not None and requested > 0 and available > 0:
             if available >= requested:
                 reasons.append(f"Sufficient capacity: {available} available >= {requested} requested")
                 allocatable = requested
@@ -238,7 +248,7 @@ def find_matches_for_need(
                 allocatable = available
                 score += 0.1
             unmet = max(0, requested - available)
-        elif available > 0:
+        elif requested is None and available > 0:
             reasons.append(f"Offer available: {available} {offer.unit}")
             allocatable = available
             unmet = 0
@@ -260,12 +270,12 @@ def find_matches_for_need(
 
         # Determine match type
         if same_district:
-            if available >= (requested or 0) and requested > 0:
+            if facts.sufficiency == "sufficient":
                 match_type = "full"
-            elif available > 0:
+            elif facts.sufficiency == "insufficient":
                 match_type = "partial"
             else:
-                match_type = "full"
+                match_type = "partial"
         else:
             match_type = "cross_district"
 
@@ -288,9 +298,14 @@ def find_matches_for_need(
             match_type=match_type,
             reasons=reasons,
             unmet_quantity=unmet,
-            requested_quantity=requested or 0,
+            requested_quantity=requested,
             available_quantity=available,
             allocatable_quantity=allocatable,
+            requested_quantity_specified=facts.requested_quantity_specified,
+            unit_match=facts.unit_match,
+            unit_mismatch=facts.unit_mismatch,
+            type_match=facts.type_match,
+            sufficiency=facts.sufficiency,
         ))
 
     # Sort by score descending, then by offer quantity descending (prefer larger offers)
@@ -340,20 +355,8 @@ def _extract_quantity(requested_resources: list[dict], need_type: str) -> int:
     Tries to match the resource type to the need type, and sums quantities.
     Returns 0 if no structured quantity is available.
     """
-    if not requested_resources:
-        return 0
-
-    total = 0
-    for r in requested_resources:
-        rtype = r.get("type", r.get("resource_type", "")).lower()
-        # Match if the resource type contains the need type or vice versa
-        if (need_type.lower() in rtype or rtype in need_type.lower()
-                or _canonical_category(need_type) == _canonical_category(rtype)):
-            qty = r.get("quantity", 0)
-            if isinstance(qty, (int, float)):
-                total += int(qty)
-
-    return total
+    facts = compare_need_resource(requested_resources, need_type, 0, None, need_type)
+    return int(facts.requested_quantity or 0)
 
 
 # -----------------------------------------------------------------------

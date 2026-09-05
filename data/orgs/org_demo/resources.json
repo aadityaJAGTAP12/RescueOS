@@ -10,5 +10,17 @@
     "org_id": "org_demo",
     "created_at": "2026-09-04T10:23:44.620425+00:00",
     "updated_at": "2026-09-04T10:23:44.620425+00:00"
+  },
+  {
+    "type": "food",
+    "resource_type": "food",
+    "quantity": 5000,
+    "unit": "kg",
+    "location": "can transport all over affected areas .",
+    "status": "available",
+    "id": "res_4da47a27",
+    "org_id": "org_demo",
+    "created_at": "2026-09-05T13:54:05.190862+00:00",
+    "updated_at": "2026-09-05T13:54:05.190862+00:00"
   }
 ]

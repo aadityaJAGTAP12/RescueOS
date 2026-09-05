@@ -192,6 +192,13 @@ The test file `tests/test_osm_pbf_ingestion.py` explicitly documents:
 
 ## 7. DATA SAFETY / RECOVERY STATUS
 
+### Known Issue: Raw Coordination Proposal Can Bypass Public Projection
+
+The coordination send-to-organization API path can return a raw proposal rather
+than the sanitized `get_public_view()` projection. If that proposal already
+contains an organization evaluation, private fields may be exposed. This is a
+tracked privacy issue and is intentionally **not fixed in the matching change**.
+
 ### Answers to Specific Questions
 
 **1. Was the previous development database preserved?**
