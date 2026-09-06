@@ -9,5 +9,49 @@
     "created_at": "2026-09-05T13:57:52.276906+00:00",
     "updated_at": "2026-09-05T13:57:52.276906+00:00",
     "current_assignment": null
+  },
+  {
+    "name": "Rescue Team A",
+    "id": "team_e48c12e7",
+    "org_id": "org_demo",
+    "created_at": "2026-09-06T11:41:05.269318+00:00",
+    "updated_at": "2026-09-06T11:41:05.269318+00:00",
+    "status": "available",
+    "members": [],
+    "current_assignment": null,
+    "location": null
+  },
+  {
+    "name": "Rescue Team A",
+    "id": "team_378d957a",
+    "org_id": "org_demo",
+    "created_at": "2026-09-06T11:43:40.704584+00:00",
+    "updated_at": "2026-09-06T11:43:40.704584+00:00",
+    "status": "available",
+    "members": [],
+    "current_assignment": null,
+    "location": null
+  },
+  {
+    "name": "Rescue Team A",
+    "id": "team_c3ad27d7",
+    "org_id": "org_demo",
+    "created_at": "2026-09-06T11:45:43.458490+00:00",
+    "updated_at": "2026-09-06T11:45:43.458490+00:00",
+    "status": "available",
+    "members": [],
+    "current_assignment": null,
+    "location": null
+  },
+  {
+    "name": "Rescue Team A",
+    "id": "team_90a6df5e",
+    "org_id": "org_demo",
+    "created_at": "2026-09-06T11:49:34.272510+00:00",
+    "updated_at": "2026-09-06T11:49:34.272510+00:00",
+    "status": "available",
+    "members": [],
+    "current_assignment": null,
+    "location": null
   }
 ]

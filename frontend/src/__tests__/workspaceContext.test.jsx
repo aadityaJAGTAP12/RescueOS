@@ -369,6 +369,43 @@ describe('Phase 7B.1 — Functional Shell', () => {
     expect(capturedState.filters.status).toBeNull();
   });
 
+  it('sends compatible query params when rail filters change', async () => {
+    render(
+      <WorkspaceProvider>
+        <TestConsumer />
+      </WorkspaceProvider>
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    fetchMock.mockClear();
+
+    await act(async () => {
+      screen.getByTestId('set-jorhat').click();
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/needs?district_id=jorhat');
+    expect(fetchMock).toHaveBeenCalledWith('/api/offers?district_id=jorhat');
+    expect(fetchMock).toHaveBeenCalledWith('/api/operations?district_id=jorhat');
+
+    fetchMock.mockClear();
+
+    await act(async () => {
+      screen.getByTestId('set-open').click();
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/needs?district_id=jorhat');
+    expect(fetchMock).toHaveBeenCalledWith('/api/offers?district_id=jorhat');
+    expect(fetchMock).toHaveBeenCalledWith('/api/operations?district_id=jorhat');
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/needs?district_id=jorhat&status=OPEN');
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/offers?district_id=jorhat&status=OPEN');
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/operations?district_id=jorhat&status=OPEN');
+  });
+
   // Test: Layer toggle affects state
   it('Layer toggle changes layer enabled state', async () => {
     let capturedState;

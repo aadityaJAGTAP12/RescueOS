@@ -1612,7 +1612,7 @@ def api_org_publish_offer(org_id):
     try:
         import uuid
         from agent.data.repository import get_repository
-        from agent.data.models import ResourceOffer, ActivityEvent
+        from agent.data.models import ResourceOffer, ActivityEvent, Organization
         from agent.org_workspace import update_resource
         
         payload = request.get_json(force=True, silent=True)
@@ -1620,7 +1620,15 @@ def api_org_publish_offer(org_id):
             return jsonify({"error": "Invalid JSON body"}), 400
         
         repo = get_repository()
-        
+
+        if not repo.get_organization(org_id):
+            repo.create_organization(Organization(
+                id=org_id,
+                name=payload.get("organization_name") or org_id,
+                organization_type=payload.get("organization_type", "ngo"),
+                description=payload.get("organization_description", ""),
+            ))
+
         # Create the public Resource Offer
         offer_id = f"offer_{str(uuid.uuid4())[:8]}"
         offer = ResourceOffer(

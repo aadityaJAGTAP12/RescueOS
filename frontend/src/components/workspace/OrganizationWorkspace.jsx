@@ -446,7 +446,10 @@ function NGOAgentPanel({ orgId, summary }) {
   const [selectedNeed, setSelectedNeed] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
-  const { state, openPanel } = useWorkspace();
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState(null);
+  const [publishMessage, setPublishMessage] = useState(null);
+  const { state, refreshAll } = useWorkspace();
 
   // Fetch situation summary
   useEffect(() => {
@@ -461,6 +464,8 @@ function NGOAgentPanel({ orgId, summary }) {
     setSelectedNeed(need);
     setAnalyzing(true);
     setAnalysis(null);
+    setPublishError(null);
+    setPublishMessage(null);
     try {
       const resp = await fetch(`/api/orgs/${orgId}/agent/analyze-need`, {
         method: "POST",
@@ -479,6 +484,9 @@ function NGOAgentPanel({ orgId, summary }) {
   };
 
   const handlePublish = async (publication) => {
+    setPublishing(true);
+    setPublishError(null);
+    setPublishMessage(null);
     try {
       const resp = await fetch(`/api/orgs/${orgId}/publish-offer`, {
         method: "POST",
@@ -486,11 +494,20 @@ function NGOAgentPanel({ orgId, summary }) {
         body: JSON.stringify(publication),
       });
       if (resp.ok) {
+        const data = await resp.json();
+        await refreshAll();
         setAnalysis(null);
         setSelectedNeed(null);
+        setPublishMessage(data.message || "Offer published to network");
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setPublishError(err.error || `Failed to publish offer (${resp.status})`);
       }
     } catch (err) {
       console.error("Publish failed:", err);
+      setPublishError("Network error: could not reach server");
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -620,12 +637,28 @@ function NGOAgentPanel({ orgId, summary }) {
               </div>
               <button
                 onClick={() => handlePublish(analysis.proposed_publication)}
-                className="w-full px-2.5 py-1.5 rounded text-[10px] font-medium bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-green-500/25 transition-colors"
+                disabled={publishing}
+                className={cn(
+                  "w-full px-2.5 py-1.5 rounded text-[10px] font-medium border transition-colors",
+                  publishing
+                    ? "bg-[#1a2332] text-[#6b7d93] border-[#2a3a4e] cursor-not-allowed"
+                    : "bg-green-500/15 text-green-400 border-green-500/30 hover:bg-green-500/25"
+                )}
               >
-                PUBLISH OFFER
+                {publishing ? "PUBLISHING..." : "PUBLISH OFFER"}
               </button>
             </div>
           )}
+        </div>
+      )}
+      {publishError && (
+        <div className="px-2.5 py-2 rounded bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">
+          {publishError}
+        </div>
+      )}
+      {publishMessage && (
+        <div className="px-2.5 py-2 rounded bg-green-500/10 border border-green-500/20 text-[11px] text-green-400">
+          {publishMessage}
         </div>
       )}
     </div>

@@ -431,9 +431,8 @@ export function WorkspaceProvider({ children }) {
     dispatch({ type: "SET_LOADING", payload: { key: "needs", value: true } });
     try {
       const params = new URLSearchParams();
-      if (filters.district_id) params.set("district_id", filters.district_id);
-      if (filters.status) params.set("status", filters.status);
-      if (filters.urgency) params.set("urgency", filters.urgency);
+      const districtId = filters.district_id || filters.district;
+      if (districtId) params.set("district_id", districtId);
       const resp = await fetch(`/api/needs?${params}`);
       if (resp.ok) {
         const data = await resp.json();
@@ -449,8 +448,8 @@ export function WorkspaceProvider({ children }) {
     dispatch({ type: "SET_LOADING", payload: { key: "offers", value: true } });
     try {
       const params = new URLSearchParams();
-      if (filters.district_id) params.set("district_id", filters.district_id);
-      if (filters.status) params.set("status", filters.status);
+      const districtId = filters.district_id || filters.district;
+      if (districtId) params.set("district_id", districtId);
       const resp = await fetch(`/api/offers?${params}`);
       if (resp.ok) {
         const data = await resp.json();
@@ -466,8 +465,8 @@ export function WorkspaceProvider({ children }) {
     dispatch({ type: "SET_LOADING", payload: { key: "operations", value: true } });
     try {
       const params = new URLSearchParams();
-      if (filters.district_id) params.set("district_id", filters.district_id);
-      if (filters.status) params.set("status", filters.status);
+      const districtId = filters.district_id || filters.district;
+      if (districtId) params.set("district_id", districtId);
       const resp = await fetch(`/api/operations?${params}`);
       if (resp.ok) {
         const data = await resp.json();

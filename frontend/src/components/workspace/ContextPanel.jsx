@@ -1410,19 +1410,35 @@ function CreateOfferForm({ onClose }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
+  useEffect(() => {
+    if (
+      state.organizations.length > 0 &&
+      !state.organizations.some((organization) => organization.id === form.organization_id)
+    ) {
+      setForm((current) => ({
+        ...current,
+        organization_id: state.organizations[0].id,
+      }));
+    }
+  }, [state.organizations, form.organization_id]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
     try {
-      const resp = await fetch("/api/offers", {
+      const resp = await fetch(`/api/orgs/${form.organization_id}/publish-offer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...form,
+          resource_type: form.resource_type,
           quantity: parseInt(form.quantity) || 0,
+          unit: form.unit,
+          location_name: form.location_name,
           lat: form.lat ? parseFloat(form.lat) : null,
           lon: form.lon ? parseFloat(form.lon) : null,
+          district_id: state.filters.district,
+          notes: form.notes,
         }),
       });
       if (resp.ok) {
