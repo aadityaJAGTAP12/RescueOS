@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   X, ArrowLeft, AlertTriangle, Package, Zap, FileText, Shield,
   Stethoscope, MapPin, Clock, Users, ChevronDown, Route,
@@ -1408,6 +1408,7 @@ function CreateOfferForm({ onClose }) {
     organization_id: "org_reliefos_default",
   });
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false); // sync double-submit guard (rapid re-clicks)
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -1424,6 +1425,8 @@ function CreateOfferForm({ onClose }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -1452,6 +1455,7 @@ function CreateOfferForm({ onClose }) {
       console.error("Failed to create offer:", err);
       setError("Network error: could not reach server");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

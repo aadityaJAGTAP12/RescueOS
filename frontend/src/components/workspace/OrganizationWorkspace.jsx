@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Shield, Package, Users, Map, Zap, AlertTriangle, Plus,
   ChevronRight, ExternalLink, Edit3, Trash2, CheckCircle,
@@ -447,6 +447,7 @@ function NGOAgentPanel({ orgId, summary }) {
   const [analysis, setAnalysis] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const publishingRef = useRef(false); // sync double-click guard (see handlePublish)
   const [publishError, setPublishError] = useState(null);
   const [publishMessage, setPublishMessage] = useState(null);
   const { state, refreshAll } = useWorkspace();
@@ -484,6 +485,10 @@ function NGOAgentPanel({ orgId, summary }) {
   };
 
   const handlePublish = async (publication) => {
+    // Synchronous guard: double-clicks can fire twice before the `publishing`
+    // state re-render lands, creating duplicate offers.
+    if (publishingRef.current) return;
+    publishingRef.current = true;
     setPublishing(true);
     setPublishError(null);
     setPublishMessage(null);
@@ -507,6 +512,7 @@ function NGOAgentPanel({ orgId, summary }) {
       console.error("Publish failed:", err);
       setPublishError("Network error: could not reach server");
     } finally {
+      publishingRef.current = false;
       setPublishing(false);
     }
   };

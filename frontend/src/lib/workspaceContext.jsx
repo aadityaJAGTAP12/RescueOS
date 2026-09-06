@@ -28,6 +28,11 @@ const initialFilters = {
   status: null,
 };
 
+// Stable top-level values (districts array) so reducer updates that don't
+// change content keep the same reference — prevents data-fetching effects from
+// re-firing on every dispatch. See SET_DISTRICTS.
+const EMPTY_DISTRICTS = [];
+
 const initialState = {
   // Map
   mapCenter: [26.98, 94.66],
@@ -119,11 +124,17 @@ function workspaceReducer(state, action) {
         layers: { ...state.layers, [action.payload]: !state.layers[action.payload] },
       };
 
-    case "SET_FILTER":
+    case "SET_FILTER": {
+      // Identity-stable no-op when the value didn't change: effects keyed on
+      // state.filters (e.g. the heavy flood-geojson fetch) must not re-fire.
+      if (state.filters[action.payload.key] === action.payload.value) {
+        return state;
+      }
       return {
         ...state,
         filters: { ...state.filters, [action.payload.key]: action.payload.value },
       };
+    }
 
     case "OPEN_PANEL":
       return {
@@ -164,8 +175,21 @@ function workspaceReducer(state, action) {
     case "SET_SELECTED_FLOOD_SNAPSHOT":
       return { ...state, selectedFloodSnapshot: action.payload.snapshot, selectedFloodData: action.payload.data };
 
-    case "SET_DISTRICTS":
-      return { ...state, districts: action.payload, loading: { ...state.loading, districts: false } };
+    case "SET_DISTRICTS": {
+      // Keep the same array reference when content is unchanged.
+      const next = action.payload || EMPTY_DISTRICTS;
+      const prev = state.districts || EMPTY_DISTRICTS;
+      if (
+        prev === next ||
+        (prev.length === next.length &&
+          prev.every((d, i) => d === next[i] || (d && next[i] && d.id === next[i].id)))
+      ) {
+        return state.loading.districts
+          ? { ...state, loading: { ...state.loading, districts: false } }
+          : state;
+      }
+      return { ...state, districts: next, loading: { ...state.loading, districts: false } };
+    }
 
     case "SET_SETTLEMENTS":
       return { ...state, settlements: action.payload, loading: { ...state.loading, settlements: false } };
@@ -706,18 +730,25 @@ export function WorkspaceProvider({ children }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Refetch when filters change ---
+  // --- Refetch when filters change (keyed on primitive values, not object
+  // identity, so identity churn elsewhere can never re-trigger the heavy
+  // flood-geojson fetch) ---
+  const districtFilter = state.filters.district;
+  const urgencyFilter = state.filters.urgency;
+  const statusFilter = state.filters.status;
+  const districtsLoaded = state.districts.length;
   useEffect(() => {
-    const districtId = state.filters.district;
+    const districtId = districtFilter;
     fetchFloodData(districtId);
     fetchSettlements(districtId);
     fetchRoads(districtId);
     fetchBridges(districtId);
     fetchMedicalFacilities(districtId);
-    fetchNeeds(state.filters);
-    fetchOffers(state.filters);
-    fetchOperations(state.filters);
+    fetchNeeds({ district: districtFilter, urgency: urgencyFilter, status: statusFilter });
+    fetchOffers({ district: districtFilter });
+    fetchOperations({ district: districtFilter });
     fetchFloodSnapshots(districtId);
-  }, [state.filters, state.districts, fetchFloodData, fetchSettlements, fetchRoads, fetchBridges, fetchMedicalFacilities, fetchNeeds, fetchOffers, fetchOperations, fetchFloodSnapshots]);
+  }, [districtFilter, urgencyFilter, statusFilter, districtsLoaded, fetchFloodData, fetchSettlements, fetchRoads, fetchBridges, fetchMedicalFacilities, fetchNeeds, fetchOffers, fetchOperations, fetchFloodSnapshots]);
 
   // --- Action helpers ---
   const toggleLayer = useCallback((layerId) => {

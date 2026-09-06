@@ -15,6 +15,8 @@ Endpoints:
 import os
 import json
 import time
+import gzip
+import hashlib
 from datetime import datetime, timezone
 
 from flask import Flask, request, jsonify
@@ -670,11 +672,114 @@ def api_flood_geojson():
 
     Phase 4: Uses repository-backed flood data when available.
     Falls back to legacy FLOOD_DATA.
+
+    Payload hygiene (publish-offer stall fix, 2026-09-06):
+    - Coordinates are rounded to 6 decimal places (~11 cm) — visually
+      identical at map-display zoom levels, far fewer bytes.
+    - Response is gzipped when the client sends Accept-Encoding: gzip
+      (browsers do; Flask test clients don't, keeping tests on plain JSON).
+    - Result is cached per (district, flood-snapshot version) so repeated
+      requests skip the expensive DB read + re-serialize + gzip work.
     """
-    # Phase 4: Try to get from repository
     district_id = request.args.get("district")
-    flood_data = get_flood_data(district_id)
-    return jsonify(flood_data)
+    flood_data = _flood_geojson_payload(district_id)
+    return _flood_geojson_response(flood_data, scope=("all" if not district_id else f"d:{district_id}"))
+
+
+def _flood_geojson_round_coords(obj):
+    """Round all coordinate pairs to 6 decimals (~11 cm precision)."""
+    if isinstance(obj, (list, tuple)) and len(obj) == 2 and all(isinstance(v, (int, float)) for v in obj):
+        return [round(float(obj[0]), 6), round(float(obj[1]), 6)]
+    if isinstance(obj, list):
+        return [_flood_geojson_round_coords(item) for item in obj]
+    return obj
+
+
+def _flood_geojson_reduce_precision(flood_data):
+    """Round feature geometry coordinates without touching properties/contract."""
+    if not isinstance(flood_data, dict):
+        return flood_data
+    features = flood_data.get("features")
+    if not isinstance(features, list):
+        return flood_data
+    reduced = []
+    for f in features:
+        if isinstance(f, dict) and isinstance(f.get("geometry"), dict) and "coordinates" in f["geometry"]:
+            geometry = dict(f["geometry"])
+            geometry["coordinates"] = _flood_geojson_round_coords(geometry["coordinates"])
+            reduced.append({**f, "geometry": geometry})
+        else:
+            reduced.append(f)
+    return {**flood_data, "features": reduced}
+
+
+# Cache: {(scope, version_key): {"plain": bytes, "gzip": bytes}} — final
+# response bytes per encoding, so warm requests serve instantly with zero
+# re-serialization. version_key = max(created_at) of the in-scope
+# flood_snapshots, so any re-import/new snapshot invalidates automatically.
+_flood_geojson_cache = {}
+_flood_geojson_cache_max = 16
+
+
+def _flood_geojson_version(repo, district_id):
+    try:
+        from sqlalchemy import select as _select, func as _func
+        from agent.data.schema import flood_snapshots as _fs
+        stmt = _select(_func.max(_fs.c.created_at))
+        if district_id:
+            stmt = stmt.where(_fs.c.district_id == district_id)
+        row = repo._execute_fetchone(stmt)
+        return str(row[0]) if row and row[0] else "none"
+    except Exception:
+        return f"uncached-{time.time()}"
+
+
+def _flood_geojson_payload(district_id):
+    """Build (and cache) response bytes for a district scope.
+
+    Returns (plain_bytes, gzip_bytes_or_None). The dict is serialized and
+    compressed exactly once per (scope, snapshot-version); every subsequent
+    request serves the cached bytes directly.
+    """
+    from agent.data.repository import get_repository
+    scope = "all" if not district_id else f"d:{district_id}"
+    try:
+        repo = get_repository()
+        version = _flood_geojson_version(repo, district_id)
+    except Exception:
+        version = f"uncached-{time.time()}"
+        repo = None
+    cache_key = (scope, version)
+    cached = _flood_geojson_cache.get(cache_key)
+    if cached is not None:
+        return cached["plain"], cached["gzip"]
+
+    flood_data = _flood_geojson_reduce_precision(get_flood_data(district_id))
+    plain = json.dumps(flood_data).encode("utf-8")
+    # Level 1: on this GeoJSON it's within ~15% of level 9's ratio but ~5x
+    # faster, keeping the one-time cold build close to the old uncompressed
+    # serve time.
+    gz = gzip.compress(plain, compresslevel=1, mtime=0)
+    entry = {"plain": plain, "gzip": gz}
+    try:
+        if len(_flood_geojson_cache) >= _flood_geojson_cache_max:
+            _flood_geojson_cache.clear()
+        _flood_geojson_cache[cache_key] = entry
+    except Exception:
+        pass
+    return plain, gz
+
+
+def _flood_geojson_response(flood_data, scope):
+    """Serve cached bytes; gzip only when the client advertises gzip support."""
+    plain, gz = flood_data
+    accepts = request.headers.get("Accept-Encoding", "")
+    if gz is not None and "gzip" in accepts.lower():
+        return app.response_class(
+            gz, status=200, mimetype="application/json",
+            headers={"Content-Encoding": "gzip"},
+        )
+    return app.response_class(plain, status=200, mimetype="application/json")
 
 
 # ---------------------------------------------------------------------------
@@ -697,8 +802,9 @@ def api_districts():
 
 @app.route("/api/districts/<district_id>/flood-geojson", methods=["GET"])
 def api_district_flood_geojson(district_id):
-    """Return flood GeoJSON for a specific district."""
-    flood_data = get_flood_data(district_id)
+    """Return flood GeoJSON for a specific district (precision-reduced, gzip-negotiated, cached)."""
+    flood_data = _flood_geojson_payload(district_id)
+    return _flood_geojson_response(flood_data, scope=f"d:{district_id}")
     return jsonify(flood_data)
 
 

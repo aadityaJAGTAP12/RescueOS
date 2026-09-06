@@ -1,3 +1,15 @@
+// DIAGNOSTIC TOOL — not production code, not a deliverable.
+// Purpose: isolated browser verification of the Publish Offer flow.
+//
+// STATUS (2026-09-06):
+// - RESOLVED: the ~51s client-side stall on the DB-backed stack was root-caused
+//   to repeated 113.8MB /api/flood-geojson responses (identity-churning effect
+//   deps) starving Chrome's 6-socket-per-host pool. Fixed via payload
+//   reduction (6dp precision + gzip + byte cache) and identity-stable reducer
+//   branches. This script now PASSES on the DB-backed stack
+//   (analyze-need ~3.2s incl. LLM timeout, publish-offer 201, count 0→1).
+//
+// Contains diagnostics-only instrumentation: window.__fetchLog fetch wrapper.
 const puppeteer = require("puppeteer");
 
 const BASE = "http://localhost:3000";
@@ -96,6 +108,26 @@ async function run() {
   page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
   page.on("pageerror", (e) => consoleErrors.push(`PAGEERROR: ${e.message}`));
 
+  // Client-side fetch lifecycle instrumentation
+  await page.evaluateOnNewDocument(() => {
+    window.__fetchLog = [];
+    const orig = window.fetch;
+    window.fetch = async (...args) => {
+      const url = String(args[0]);
+      const entry = { url, start: Date.now(), done: null };
+      window.__fetchLog.push(entry);
+      try {
+        const resp = await orig(...args);
+        entry.done = `resp:${resp.status}+${Date.now() - entry.start}ms`;
+        try { await resp.clone().json(); entry.done += " +bodyread"; } catch (e) { entry.done += " +bodyreadFAIL:" + e.message; }
+        return resp;
+      } catch (e) {
+        entry.done = `THROW:${e.message}+${Date.now() - entry.start}ms`;
+        throw e;
+      }
+    };
+  });
+
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("button", { timeout: 30000 });
   await new Promise((r) => setTimeout(r, 4000));
@@ -123,27 +155,37 @@ async function run() {
     10000
   );
 
-  // 2b. Open the AI tab (tab bar button, NOT the header "AI" toggle)
+  // 2b. Open the AI tab — scoped: the tab-bar "AI" button is the one whose
+  // parent also contains the "Overview" tab (avoids header AI toggle)
   const aiTab = await page.evaluate(() => {
-    const btns = [...document.querySelectorAll("button")].filter(
+    const overview = [...document.querySelectorAll("button")].find(
+      (b) => b.innerText.trim().toLowerCase() === "overview"
+    );
+    if (!overview) return { ok: false, reason: "no overview tab" };
+    const aiBtn = [...overview.parentElement.querySelectorAll("button")].find(
       (b) => b.innerText.trim().toLowerCase() === "ai"
     );
-    const btn = btns[btns.length - 1]; // last match = workspace tab bar
-    if (btn) { btn.click(); return btns.length; }
-    return 0;
+    if (!aiBtn) return { ok: false, reason: "no ai tab next to overview" };
+    aiBtn.click();
+    return { ok: true };
   });
-  // Wait for the AI panel to actually render its need buttons
+  // Wait for the NGO AI panel to render (heading + at least one need button)
   const aiReady = await waitForEval(
     () => {
+      if (!document.body.innerText.includes("NGO AI")) return null;
       const panels = [...document.querySelectorAll("div")]
         .filter((d) => d.innerText && d.innerText.includes("QUICK ANALYSIS"))
         .filter((d) => d.querySelector("button"))
         .sort((a, b) => a.innerText.length - b.innerText.length);
       return panels.length > 0 ? { found: true } : null;
     },
-    15000
+    25000
   );
   await page.screenshot({ path: "/tmp/step2-aitab.png" });
+  const aiDebug = await page.evaluate(() => ({
+    hasNgoAi: document.body.innerText.includes("NGO AI"),
+    hasLoading: document.body.innerText.includes("Loading AI context"),
+  }));
 
   // 2c. Click a need inside the QUICK ANALYSIS panel (scoped, avoids
   // bottom activity bar / dossier matches). Prefer our seeded need; any
@@ -232,7 +274,7 @@ async function run() {
     beforeCount,
     afterCount,
     delta: afterCount !== null && beforeCount !== null ? afterCount - beforeCount : null,
-    ui: { switched, orgReady, aiTab, aiReady, needClicked, publishVisible, afterNeedClick, publishClicked },
+    ui: { switched, orgReady, aiTab, aiReady, aiDebug, needClicked, publishVisible, afterNeedClick, publishClicked },
     apiTraffic: traffic
       .filter((t) => t.method !== "GET")
       .map((t) => `${t.phase} ${t.status ?? t.method} ${t.url}`),
@@ -244,6 +286,7 @@ async function run() {
       : null,
     newestOffer: newest,
     consoleErrors,
+    fetchLog: await page.evaluate(() => window.__fetchLog || []),
   }, null, 2));
 
   await browser.close();
