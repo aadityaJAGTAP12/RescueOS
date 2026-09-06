@@ -485,7 +485,7 @@ def api_field_intelligence_history():
 def api_apply_override():
     """
     Apply a manual override to a facility or road status.
-    Body: {target_type, target_id, new_status, reason}
+    Body: {target_type, target_id, new_status, reason, actor?}
     """
     payload = request.get_json(force=True, silent=True)
     if not payload:
@@ -495,6 +495,9 @@ def api_apply_override():
     target_id = payload.get("target_id")
     new_status = payload.get("new_status")
     reason = payload.get("reason", "")
+    # Audit trail: honor the caller-supplied actor; fall back to the
+    # codebase-wide default ("coordinator") when absent or empty.
+    actor = (payload.get("actor") or "").strip() or "coordinator"
 
     if not all([target_type, target_id, new_status]):
         return jsonify({"error": "Required: target_type, target_id, new_status"}), 400
@@ -514,6 +517,7 @@ def api_apply_override():
         target_id=target_id,
         new_status=new_status,
         reason=reason,
+        actor=actor,
         system_status=system_status,
     )
 

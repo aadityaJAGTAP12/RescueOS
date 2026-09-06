@@ -9,38 +9,59 @@ Design principles:
 - Additive record only — never deletes or modifies underlying tool/cache data
 - Both system_status and override are always accessible
 - Override takes precedence for display, but original is never hidden
+
+Storage (consolidated 2026-09-06):
+All overrides are persisted through the shared data repository
+(PostgresRepository when DATABASE_URL is set, InMemoryRepository for
+tests/dev) — the same single source of truth as every other entity
+(needs, offers, operations, field reports). This module previously used a
+dedicated JSON file (data/overrides.json), which diverged from the
+overrides DB table (the "split-brain" issue); the file is no longer read
+or written by runtime code. agent/data/migration.py remains the one-time
+importer that moved file contents into the DB.
 """
 
-import json
-import os
 import uuid
 from datetime import datetime, timezone
 
 
 # ---------------------------------------------------------------------------
-# Storage
+# Repository access (single source of truth)
 # ---------------------------------------------------------------------------
 
-_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-OVERRIDES_FILE = os.path.join(_DATA_DIR, "overrides.json")
+def _get_repo():
+    from agent.data.repository import get_repository
+    return get_repository()
+
+
+def _record_to_model(record: dict):
+    """Convert a legacy override dict into an Override model."""
+    from agent.data.models import Override
+
+    created_at = None
+    raw_ts = record.get("timestamp") or record.get("created_at")
+    if raw_ts:
+        try:
+            created_at = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            created_at = None
+
+    return Override(
+        id=record.get("id") or f"{uuid.uuid4()}"[:8],
+        target_type=record.get("target_type", ""),
+        target_id=record.get("target_id", ""),
+        override_status=record.get("override_status", record.get("new_status", "")),
+        reason=record.get("reason", ""),
+        actor=record.get("actor", "coordinator"),
+        system_status=record.get("system_status", "unknown"),
+        active=record.get("active", True),
+        created_at=created_at,
+    )
 
 
 def _load_overrides() -> list[dict]:
-    """Load all overrides from JSON file."""
-    if not os.path.exists(OVERRIDES_FILE):
-        return []
-    try:
-        with open(OVERRIDES_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-
-def _save_overrides(overrides: list[dict]) -> None:
-    """Save overrides to JSON file."""
-    os.makedirs(os.path.dirname(OVERRIDES_FILE), exist_ok=True)
-    with open(OVERRIDES_FILE, "w") as f:
-        json.dump(overrides, f, indent=2)
+    """All override records (legacy dict shape) via the shared repository."""
+    return [o.to_dict() for o in _get_repo().list_overrides()]
 
 
 # ---------------------------------------------------------------------------
@@ -69,9 +90,8 @@ def apply_override(
     Returns:
         The override record that was stored.
     """
-    override_id = str(uuid.uuid4())[:8]
     record = {
-        "id": override_id,
+        "id": f"{uuid.uuid4()}"[:8],
         "target_type": target_type,
         "target_id": target_id,
         "system_status": system_status,
@@ -82,9 +102,7 @@ def apply_override(
         "active": True,
     }
 
-    overrides = _load_overrides()
-    overrides.append(record)
-    _save_overrides(overrides)
+    _get_repo().upsert_override(_record_to_model(record))
 
     return record
 
@@ -195,5 +213,14 @@ def get_all_overrides() -> list[dict]:
 
 
 def clear_overrides() -> None:
-    """Clear all overrides (for testing)."""
-    _save_overrides([])
+    """
+    Deactivate all overrides in the current store (testing helper).
+
+    Note: rows are deactivated, not deleted — the repository API has no
+    delete operation, preserving the audit trail.
+    """
+    repo = _get_repo()
+    for o in repo.list_overrides():
+        if o.active:
+            o.active = False
+            repo.upsert_override(o)
