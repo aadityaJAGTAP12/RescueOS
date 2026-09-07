@@ -18,5 +18,25 @@
     "created_at": "2026-09-07T23:03:48.873571+00:00",
     "updated_at": "2026-09-07T23:03:48.873571+00:00",
     "status": "available"
+  },
+  {
+    "quantity": 10,
+    "resource_type": "water",
+    "unit": "liters",
+    "id": "res_edd08e54",
+    "org_id": "org_notif_a",
+    "created_at": "2026-09-07T23:09:57.665506+00:00",
+    "updated_at": "2026-09-07T23:09:57.665506+00:00",
+    "status": "available"
+  },
+  {
+    "quantity": 10,
+    "resource_type": "water",
+    "unit": "liters",
+    "id": "res_b2215474",
+    "org_id": "org_notif_a",
+    "created_at": "2026-09-07T23:13:45.900131+00:00",
+    "updated_at": "2026-09-07T23:13:45.900131+00:00",
+    "status": "available"
   }
 ]

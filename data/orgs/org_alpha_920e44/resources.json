@@ -1,0 +1,13 @@
+[
+  {
+    "location": "Warehouse Alpha Top Secret",
+    "quantity": 10,
+    "resource_type": "rescue_boat",
+    "unit": "boats",
+    "id": "res_a0709119",
+    "org_id": "org_alpha_920e44",
+    "created_at": "2026-09-07T23:18:10.651798+00:00",
+    "updated_at": "2026-09-07T23:18:10.651798+00:00",
+    "status": "available"
+  }
+]
