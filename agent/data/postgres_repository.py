@@ -1268,6 +1268,191 @@ class PostgresRepository(DataRepository):
             metadata=row.metadata or {},
         )
 
+    # ------------------------------------------------------------------
+    # Coordination Proposals (Item #5 Step 2 — PostgreSQL authoritative)
+    #
+    # Proposals are plain dicts in the domain layer (Phase 7H schema).
+    # Timestamps: ISO strings in the dict, DateTime(timezone=True) in DB.
+    # org_evaluation / private_factors are NGO-PRIVATE columns — they are
+    # returned to the domain layer for server-side evaluation flow only;
+    # network responses must use the explicit public projection in
+    # agent/coordination/proposal.py::get_public_view (never a raw row dump).
+    # ------------------------------------------------------------------
+
+    _PROPOSAL_LIST_COLUMNS = (
+        "public_evidence", "network_findings", "constraints",
+        "uncertainty", "org_evaluation", "private_factors",
+    )
+
+    def create_proposal(self, proposal: dict) -> dict:
+        from agent.data.schema import coordination_proposals as prop_table
+        stmt = pg_insert(prop_table).values(
+            id=proposal["id"],
+            need_id=proposal.get("need_id") or None,
+            organization_id=proposal["organization_id"],
+            organization_name=proposal.get("organization_name"),
+            proposal_type=proposal.get("proposal_type", "other"),
+            summary=proposal.get("summary", ""),
+            public_evidence=proposal.get("public_evidence") or [],
+            network_findings=proposal.get("network_findings") or [],
+            constraints=proposal.get("constraints") or [],
+            uncertainty=proposal.get("uncertainty") or [],
+            recommended_action=proposal.get("recommended_action", ""),
+            status=proposal.get("status", "PROPOSED"),
+            # created_at/updated_at are NOT NULL with server_default=now(): an
+            # explicit None would override the default and raise NotNullViolation.
+            # Omitted/invalid timestamps fall back to current UTC (matches the
+            # project's datetime.now(timezone.utc) convention elsewhere).
+            created_at=self._iso_to_dt(proposal.get("created_at"))
+            or datetime.now(timezone.utc),
+            updated_at=self._iso_to_dt(proposal.get("updated_at"))
+            or datetime.now(timezone.utc),
+            approved_at=self._iso_to_dt(proposal.get("approved_at")),
+            approved_by=proposal.get("approved_by"),
+            published_offer_id=proposal.get("published_offer_id"),
+            operation_id=proposal.get("operation_id"),
+            org_evaluation=proposal.get("org_evaluation"),
+            private_factors=proposal.get("private_factors"),
+        )
+        # Documented semantics (matches InMemory + legacy JSON behavior):
+        # re-creating an existing id is last-write-wins. PostgreSQL enforces
+        # the PK, so an explicit upsert is required for parity.
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[prop_table.c.id],
+            set_={
+                "need_id": stmt.excluded.need_id,
+                "organization_id": stmt.excluded.organization_id,
+                "organization_name": stmt.excluded.organization_name,
+                "proposal_type": stmt.excluded.proposal_type,
+                "summary": stmt.excluded.summary,
+                "public_evidence": stmt.excluded.public_evidence,
+                "network_findings": stmt.excluded.network_findings,
+                "constraints": stmt.excluded.constraints,
+                "uncertainty": stmt.excluded.uncertainty,
+                "recommended_action": stmt.excluded.recommended_action,
+                "status": stmt.excluded.status,
+                "created_at": stmt.excluded.created_at,
+                "updated_at": stmt.excluded.updated_at,
+                "approved_at": stmt.excluded.approved_at,
+                "approved_by": stmt.excluded.approved_by,
+                "published_offer_id": stmt.excluded.published_offer_id,
+                "operation_id": stmt.excluded.operation_id,
+                "org_evaluation": stmt.excluded.org_evaluation,
+                "private_factors": stmt.excluded.private_factors,
+            },
+        )
+        self._execute(stmt)
+        return proposal
+
+    def get_proposal(self, proposal_id: str) -> Optional[dict]:
+        from agent.data.schema import coordination_proposals as prop_table
+        row = self._execute_fetchone(
+            select(prop_table).where(prop_table.c.id == proposal_id)
+        )
+        return self._row_to_proposal(row) if row is not None else None
+
+    def list_proposals(self, need_id: str = None, organization_id: str = None,
+                       status: str = None) -> list[dict]:
+        from agent.data.schema import coordination_proposals as prop_table
+        stmt = select(prop_table)
+        if need_id:
+            stmt = stmt.where(prop_table.c.need_id == need_id)
+        if organization_id:
+            stmt = stmt.where(prop_table.c.organization_id == organization_id)
+        if status:
+            stmt = stmt.where(prop_table.c.status == status)
+        stmt = stmt.order_by(prop_table.c.created_at.desc())
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_proposal(r) for r in rows]
+
+    def update_proposal(self, proposal_id: str, updates: dict,
+                        expected_statuses: list = None) -> Optional[dict]:
+        from agent.data.schema import coordination_proposals as prop_table
+
+        values = {}
+        if "need_id" in updates:
+            values["need_id"] = updates["need_id"] or None
+        if "organization_id" in updates:
+            values["organization_id"] = updates["organization_id"]
+        if "organization_name" in updates:
+            values["organization_name"] = updates["organization_name"]
+        if "proposal_type" in updates:
+            values["proposal_type"] = updates["proposal_type"]
+        if "summary" in updates:
+            values["summary"] = updates["summary"]
+        for col in self._PROPOSAL_LIST_COLUMNS:
+            if col in updates:
+                values[col] = updates[col]
+        if "recommended_action" in updates:
+            values["recommended_action"] = updates["recommended_action"]
+        if "status" in updates:
+            values["status"] = updates["status"]
+        if "approved_at" in updates:
+            values["approved_at"] = self._iso_to_dt(updates["approved_at"])
+        if "approved_by" in updates:
+            values["approved_by"] = updates["approved_by"]
+        if "published_offer_id" in updates:
+            values["published_offer_id"] = updates["published_offer_id"]
+        if "operation_id" in updates:
+            values["operation_id"] = updates["operation_id"]
+
+        # Single atomic UPDATE; updated_at always advances.
+        values["updated_at"] = self._iso_to_dt(updates.get("updated_at")) or datetime.now(timezone.utc)
+
+        stmt = update(prop_table).where(prop_table.c.id == proposal_id).values(**values)
+        if expected_statuses is not None:
+            stmt = stmt.where(prop_table.c.status.in_(expected_statuses))
+        result = self._execute(stmt)
+        if result.rowcount == 0:
+            return None
+        return self.get_proposal(proposal_id)
+
+    @staticmethod
+    def _iso_to_dt(value):
+        """ISO string -> tz-aware datetime (None passthrough)."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        try:
+            return datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _dt_to_iso(value):
+        """tz-aware datetime -> ISO string (None passthrough)."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return value.isoformat()
+
+    def _row_to_proposal(self, row) -> dict:
+        """Explicit row -> dict mapping (never dict(row) into responses)."""
+        return {
+            "id": row.id,
+            "need_id": row.need_id or "",
+            "organization_id": row.organization_id,
+            "organization_name": row.organization_name,
+            "proposal_type": row.proposal_type,
+            "summary": row.summary,
+            "public_evidence": row.public_evidence or [],
+            "network_findings": row.network_findings or [],
+            "constraints": row.constraints or [],
+            "uncertainty": row.uncertainty or [],
+            "recommended_action": row.recommended_action or "",
+            "status": row.status,
+            "created_at": self._dt_to_iso(row.created_at),
+            "updated_at": self._dt_to_iso(row.updated_at),
+            "approved_at": self._dt_to_iso(row.approved_at),
+            "approved_by": row.approved_by,
+            "published_offer_id": row.published_offer_id,
+            "operation_id": row.operation_id,
+            "org_evaluation": row.org_evaluation,   # PRIVATE — domain layer only
+            "private_factors": row.private_factors,  # PRIVATE — domain layer only
+        }
+
     def _row_geometry_to_wkt(self, row, col_name: str) -> Optional[str]:
         """Extract WKT from a PostGIS geometry column."""
         geom = getattr(row, col_name, None)

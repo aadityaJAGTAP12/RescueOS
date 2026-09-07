@@ -5,7 +5,84 @@ Provides mock data for flood status, building exposure, and medical
 accessibility so tests can run without Overpass or Ollama.
 """
 
+import os
+
 import pytest
+
+
+# Explicit test-mode repository selection (Item 5B, Phase C/D):
+#   RELIEFOS_MEMORY=1  → InMemoryRepository (memory-mode tests)
+#   DATABASE_URL set   → PostgresRepository  (real PostgreSQL tests)
+#   neither            → InMemoryRepository (safe standalone default)
+#
+# The repository is NOT reset to a specific implementation here; it is only
+# cleared so get_repository() re-selects from the environment above. Tests
+# claiming to exercise PostgreSQL MUST assert the repository identity:
+#   type(get_repository()).__name__ == "PostgresRepository"
+
+
+def _resolve_test_repo_mode():
+    if os.environ.get("RELIEFOS_MEMORY", "").strip() in ("1", "true", "yes"):
+        return "memory"
+    if os.environ.get("DATABASE_URL", "").strip():
+        return "postgres"
+    return "memory"
+
+
+TEST_REPO_MODE = _resolve_test_repo_mode()
+
+# Item 5B identity evidence: count, per test, which repository backend was
+# ACTUALLY in use during the call phase (module fixtures may explicitly
+# override the ambient selection — e.g. the pure in-memory unit-test
+# modules). Written to .repo_identity.json at session finish so the run's
+# backend distribution is provable, not assumed.
+_REPO_IDENTITY_COUNTS: dict = {}
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    yield
+    try:
+        from agent.data import repository as rm
+        repo = rm._default_repository
+        name = type(repo).__name__ if repo is not None else "none"
+        _REPO_IDENTITY_COUNTS[name] = _REPO_IDENTITY_COUNTS.get(name, 0) + 1
+    except Exception:
+        pass
+
+
+def pytest_sessionfinish(session, exitstatus):
+    import json as _json
+    try:
+        with open(".repo_identity.json", "w") as f:
+            _json.dump({
+                "mode": TEST_REPO_MODE,
+                "counts_by_backend": _REPO_IDENTITY_COUNTS,
+            }, f, indent=2)
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _explicit_repo_mode():
+    """Clear any cached repository around each test so selection is explicit
+    and per-test, then prove the resolved identity matches TEST_REPO_MODE."""
+    from agent.data import repository as repo_mod
+
+    repo_mod.reset_repository()
+    repo = repo_mod.get_repository()
+    name = type(repo).__name__
+    if TEST_REPO_MODE == "postgres":
+        assert name == "PostgresRepository", (
+            f"DATABASE_URL is set but repository resolved to {name} — "
+            "DB-mode tests must actually exercise PostgreSQL"
+        )
+    else:
+        assert name == "InMemoryRepository", (
+            f"Memory-mode tests must use InMemoryRepository, got {name}"
+        )
+    yield
+    repo_mod.reset_repository()
 
 
 @pytest.fixture

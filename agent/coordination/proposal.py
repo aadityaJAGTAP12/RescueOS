@@ -4,11 +4,24 @@ CoordinationProposal — Structured coordination between Network and NGO.
 Phase 7H: The coordination proposal sits above the existing collaboration
 lifecycle (Need → Offer → Match → Confirm → Operation).
 
+Item #5 Step 2: This module is now a DOMAIN layer over the shared
+repository (agent.data.repository.get_repository). PostgreSQL is the
+single authoritative persistence source; the former file-backed JSON store
+(agent/data/coordination_proposals.json) is no longer read or written at
+runtime and is retained only as a historical fixture.
+
 Lifecycle:
     PROPOSED → PENDING_ORG_REVIEW → ORG_RECOMMENDED → PENDING_HUMAN_APPROVAL
     → PUBLISHED → CONFIRMED → COMPLETED
 
     Or: DECLINED / EXPIRED at any point before PUBLISHED.
+
+Privacy boundary (Item #5 Step 1 — preserved verbatim):
+    - get_public_view() is the ONLY representation network-facing routes
+      may serialize. It excludes org_evaluation / private_factors.
+    - get_org_view() adds the evaluation decision only.
+    - Raw records (including private columns) exist server-side for the
+      NGO evaluation flow; they are never returned by network routes.
 """
 
 from __future__ import annotations
@@ -21,31 +34,32 @@ from typing import Optional
 
 
 # ---------------------------------------------------------------------------
-# Storage
+# Persistence (Item #5 Step 2): delegated to the shared repository layer.
+#
+#   API → proposal domain functions (this module) → DataRepository → PostgreSQL
+#
+# In RELIEFOS_MEMORY mode the InMemoryRepository backs the same interface
+# (tests/dev only — that is the established fallback, NOT a JSON fallback).
 # ---------------------------------------------------------------------------
 
-_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-PROPOSALS_FILE = os.path.join(_DATA_DIR, "coordination_proposals.json")
+def _repo():
+    from agent.data.repository import get_repository
+    return get_repository()
 
 
-def _load_proposals() -> list[dict]:
-    if not os.path.exists(PROPOSALS_FILE):
-        return []
-    try:
-        with open(PROPOSALS_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-
-def _save_proposals(proposals: list[dict]) -> None:
-    os.makedirs(os.path.dirname(PROPOSALS_FILE), exist_ok=True)
-    with open(PROPOSALS_FILE, "w") as f:
-        json.dump(proposals, f, indent=2)
+# Status transition source states, for optional optimistic guards on
+# update_proposal(expected_statuses=...). Current semantics remain
+# last-write-wins (guards are NOT enforced by the lifecycle helpers below);
+# see docs/PHASE7I_COORDINATION_PRIVACY_AUDIT.md § concurrency.
+LIFECYCLE_STATUSES = [
+    "PROPOSED", "PENDING_ORG_REVIEW", "ORG_RECOMMENDED",
+    "PENDING_HUMAN_APPROVAL", "PUBLISHED", "CONFIRMED", "COMPLETED",
+    "DECLINED", "EXPIRED",
+]
 
 
 # ---------------------------------------------------------------------------
-# CRUD
+# CRUD (delegating to the authoritative repository)
 # ---------------------------------------------------------------------------
 
 def create_proposal(
@@ -60,7 +74,7 @@ def create_proposal(
     uncertainty: list[str] = None,
     recommended_action: str = "",
 ) -> dict:
-    """Create a new coordination proposal."""
+    """Create a new coordination proposal (persisted via the repository)."""
     proposal = {
         "id": f"prop_{str(uuid.uuid4())[:8]}",
         "need_id": need_id,
@@ -83,19 +97,12 @@ def create_proposal(
         "org_evaluation": None,  # Private evaluation from NGO (never exposed to network)
         "private_factors": None,  # Private factors from NGO (never exposed to network)
     }
-    proposals = _load_proposals()
-    proposals.append(proposal)
-    _save_proposals(proposals)
-    return proposal
+    return _repo().create_proposal(proposal)
 
 
 def get_proposal(proposal_id: str) -> Optional[dict]:
-    """Get a specific proposal."""
-    proposals = _load_proposals()
-    for p in proposals:
-        if p["id"] == proposal_id:
-            return p
-    return None
+    """Get a specific proposal (raw record — server-side use only)."""
+    return _repo().get_proposal(proposal_id)
 
 
 def list_proposals(
@@ -103,27 +110,14 @@ def list_proposals(
     organization_id: str = None,
     status: str = None,
 ) -> list[dict]:
-    """List proposals with optional filters."""
-    proposals = _load_proposals()
-    if need_id:
-        proposals = [p for p in proposals if p["need_id"] == need_id]
-    if organization_id:
-        proposals = [p for p in proposals if p["organization_id"] == organization_id]
-    if status:
-        proposals = [p for p in proposals if p["status"] == status]
-    return proposals
+    """List proposals with optional filters (raw records — project before returning)."""
+    return _repo().list_proposals(need_id=need_id, organization_id=organization_id, status=status)
 
 
-def update_proposal(proposal_id: str, updates: dict) -> Optional[dict]:
-    """Update a proposal."""
-    proposals = _load_proposals()
-    for p in proposals:
-        if p["id"] == proposal_id:
-            p.update(updates)
-            p["updated_at"] = datetime.now(timezone.utc).isoformat()
-            _save_proposals(proposals)
-            return p
-    return None
+def update_proposal(proposal_id: str, updates: dict,
+                    expected_statuses: list = None) -> Optional[dict]:
+    """Update a proposal through the authoritative repository."""
+    return _repo().update_proposal(proposal_id, updates, expected_statuses=expected_statuses)
 
 
 def send_to_org(proposal_id: str) -> Optional[dict]:

@@ -13,11 +13,14 @@ Tests for:
 - Field report -> override workflow
 - Privacy boundary
 
-Uses RELIEFOS_MEMORY=1 to ensure InMemoryRepository is used.
+Uses an explicitly selected InMemoryRepository (fresh_repo fixture) so the
+repository identity is provable in both memory and DATABASE_URL runs.
 """
 
-import os
-os.environ["RELIEFOS_MEMORY"] = "1"
+# Repository selection: fresh_repo below explicitly sets an
+# InMemoryRepository per test. No RELIEFOS_MEMORY env forcing — the
+# import-time override poisoned the whole pytest process and silently
+# downgraded DATABASE_URL runs to memory mode (Item 5B finding).
 
 import json
 import pytest
@@ -38,9 +41,15 @@ from agent.overrides import apply_override, get_active_override, get_operational
 
 @pytest.fixture(autouse=True)
 def fresh_repo():
-    """Provide a fresh InMemoryRepository for each test."""
+    """Provide a fresh InMemoryRepository for each test.
+
+    Explicitly selected (not env-forced) so the repository identity is
+    provable regardless of the ambient DATABASE_URL (Item 5B).
+    """
     reset_repository()
-    repo = get_repository()
+    from agent.data.repository import InMemoryRepository, set_repository
+    repo = InMemoryRepository()
+    set_repository(repo)
     yield repo
     reset_repository()
     clear_overrides()

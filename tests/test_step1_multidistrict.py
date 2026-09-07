@@ -21,8 +21,9 @@ Tests:
 17. Lifecycle: need creation → offer creation → match retrieval → no op yet → confirm → op created
 """
 
-import os
-os.environ["RELIEFOS_MEMORY"] = "1"
+# Repository selection: fresh_repo below explicitly sets an
+# InMemoryRepository per test. No RELIEFOS_MEMORY env forcing here — the
+# import-time override poisoned the whole pytest process (Item 5B finding).
 
 import json
 import pytest

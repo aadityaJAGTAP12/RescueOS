@@ -7,8 +7,10 @@ using the InMemoryRepository (no external dependencies).
 Uses RELIEFOS_MEMORY=1 to ensure InMemoryRepository is used.
 """
 
-import os
-os.environ["RELIEFOS_MEMORY"] = "1"
+# Repository selection: fresh_repo below explicitly sets an
+# InMemoryRepository per test. No RELIEFOS_MEMORY env forcing — the
+# import-time override poisoned the whole pytest process and silently
+# downgraded DATABASE_URL runs to memory mode (Item 5B finding).
 
 import pytest
 from datetime import datetime, timezone
@@ -25,9 +27,15 @@ from agent.data.repository import get_repository, reset_repository
 
 @pytest.fixture(autouse=True)
 def fresh_repo():
-    """Provide a fresh InMemoryRepository for each test."""
+    """Provide a fresh InMemoryRepository for each test.
+
+    Explicitly selected (not env-forced) so the repository identity is
+    provable regardless of the ambient DATABASE_URL (Item 5B).
+    """
     reset_repository()
-    repo = get_repository()
+    from agent.data.repository import InMemoryRepository, set_repository
+    repo = InMemoryRepository()
+    set_repository(repo)
     yield repo
     reset_repository()
 

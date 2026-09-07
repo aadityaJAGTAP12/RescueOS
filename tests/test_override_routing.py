@@ -14,8 +14,11 @@ This is NOT a unit test of an isolated function — it proves the full chain:
     → Route result includes blockage warning
 """
 
-import os
-os.environ["RELIEFOS_MEMORY"] = "1"
+# Repository selection: this module explicitly sets an InMemoryRepository in
+# its fresh_repo fixture (override-routing is a pure in-memory unit test of
+# route viability). No RELIEFOS_MEMORY env forcing — that poisoned the whole
+# pytest process and silently downgraded DATABASE_URL runs to memory mode
+# (Item 5B finding).
 
 import pytest
 from datetime import datetime, timezone

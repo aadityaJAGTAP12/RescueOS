@@ -354,6 +354,55 @@ notifications = Table(
     Index("ix_notifications_created_at", "created_at"),
 )
 
+# Item #5 Step 2: Coordination proposals (Phase 7H) — migrated from the
+# file-backed JSON store (agent/data/coordination_proposals.json) to the
+# single authoritative PostgreSQL source.
+#
+# Privacy note: org_evaluation / private_factors hold NGO-PRIVATE evaluation
+# state (mirroring the previous JSON schema). They are stored server-side
+# only — every network-facing response must go through the explicit public
+# projection in agent/coordination/proposal.py::get_public_view, never
+# through a raw row dump.
+#
+# No FKs on need_id / organization_id / published_offer_id / operation_id:
+# proposals may legitimately reference objects that are not (yet) registered
+# rows (e.g. targeting an org id string, ephemeral need payloads). Reference
+# integrity is the domain layer's concern; indexes match actual queries.
+coordination_proposals = Table(
+    "coordination_proposals",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("need_id", String(256), nullable=True),
+    Column("organization_id", String(256), nullable=False),
+    Column("organization_name", String(512), nullable=True),
+    Column("proposal_type", String(128), nullable=False),
+    Column("summary", Text, nullable=False, server_default=""),
+    Column("public_evidence", JSON, nullable=False, server_default="[]"),
+    Column("network_findings", JSON, nullable=False, server_default="[]"),
+    Column("constraints", JSON, nullable=False, server_default="[]"),
+    Column("uncertainty", JSON, nullable=False, server_default="[]"),
+    Column("recommended_action", Text, nullable=False, server_default=""),
+    Column("status", String(64), nullable=False, server_default="PROPOSED"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("approved_at", DateTime(timezone=True), nullable=True),
+    Column("approved_by", String(256), nullable=True),
+    Column("published_offer_id", String(256), nullable=True),
+    Column("operation_id", String(256), nullable=True),
+    Column("org_evaluation", JSON, nullable=True),   # PRIVATE — never in public projections
+    Column("private_factors", JSON, nullable=True),  # PRIVATE — never in public projections
+    Index("ix_coordination_proposals_org_id", "organization_id"),
+    Index("ix_coordination_proposals_need_id", "need_id"),
+    Index("ix_coordination_proposals_status", "status"),
+    Index("ix_coordination_proposals_created_at", "created_at"),
+    CheckConstraint(
+        "status IN ('PROPOSED', 'PENDING_ORG_REVIEW', 'ORG_RECOMMENDED', "
+        "'PENDING_HUMAN_APPROVAL', 'PUBLISHED', 'CONFIRMED', 'COMPLETED', "
+        "'DECLINED', 'EXPIRED')",
+        name="ck_coordination_proposals_status"
+    ),
+)
+
 
 # ---------------------------------------------------------------------------
 # Engine / helpers

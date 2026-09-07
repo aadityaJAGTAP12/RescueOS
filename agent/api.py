@@ -2149,14 +2149,15 @@ def api_coordination_propose():
     This does NOT publish anything — it creates a proposal for review.
     """
     try:
-        from agent.coordination.proposal import create_proposal
+        import uuid
+        from agent.coordination.proposal import create_proposal, get_public_view
         from agent.coordination.candidate_selection import select_candidates
         from agent.data.repository import get_repository
-        
+
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
-        
+
         need = payload.get("need", {})
         org_id = payload.get("organization_id")
         org_name = payload.get("organization_name", org_id)
@@ -2190,7 +2191,9 @@ def api_coordination_propose():
             detail=f"Coordination proposal created for Need {need.get('id', '')} → {org_name}",
         ))
         
-        return jsonify({"proposal": proposal, "candidates": candidates}), 201
+        # Return the sanitized public projection — never the raw proposal dict
+        # (which carries org_evaluation/private_factors slots for the lifecycle).
+        return jsonify({"proposal": get_public_view(proposal), "candidates": candidates}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -2225,13 +2228,18 @@ def api_get_proposal(proposal_id):
 
 @app.route("/api/network/coordination/proposals/<proposal_id>/send-to-org", methods=["POST"])
 def api_send_proposal_to_org(proposal_id):
-    """Send proposal to NGO for evaluation."""
+    """Send proposal to NGO for evaluation.
+
+    Privacy boundary: returns the sanitized PUBLIC projection only. The raw
+    proposal dict may carry org_evaluation/private_factors recorded by the
+    targeted NGO — those must never appear in a network response.
+    """
     try:
-        from agent.coordination.proposal import send_to_org
+        from agent.coordination.proposal import send_to_org, get_public_view
         proposal = send_to_org(proposal_id)
         if not proposal:
             return jsonify({"error": "Proposal not found"}), 404
-        return jsonify({"proposal": proposal})
+        return jsonify({"proposal": get_public_view(proposal)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -2247,6 +2255,7 @@ def api_org_evaluate_coordination():
     Returns evaluation (private factors are stored but NOT exposed in response).
     """
     try:
+        import uuid
         from agent.coordination.proposal import get_proposal, record_org_evaluation
         from agent.coordination.ngo_evaluation import evaluate_coordination
 
@@ -2259,7 +2268,15 @@ def api_org_evaluate_coordination():
         proposal = get_proposal(payload["proposal_id"])
         if not proposal:
             return jsonify({"error": "Proposal not found"}), 404
-        
+
+        # Privacy/integrity boundary: only the TARGETED organization may
+        # evaluate. Otherwise org B could write an evaluation onto a proposal
+        # targeting org A (and 404 rather than 403 to avoid revealing
+        # existence). The session seam decides the org — a client-supplied
+        # org_id in the body is never honored.
+        if proposal.get("organization_id") != org_id:
+            return jsonify({"error": "Proposal not found"}), 404
+
         # Evaluate using private state
         evaluation = evaluate_coordination(proposal, org_id)
         
@@ -2315,7 +2332,15 @@ def api_org_approve_publication():
         proposal = get_proposal(payload["proposal_id"])
         if not proposal:
             return jsonify({"error": "Proposal not found"}), 404
-        
+
+        # Privacy/integrity boundary: only the TARGETED organization may
+        # approve publication. Otherwise org B could approve org A's proposal
+        # and publish an offer under B's id derived from A's private
+        # evaluation. The session seam decides the org — a client-supplied
+        # org_id in the body is never honored.
+        if proposal.get("organization_id") != org_id:
+            return jsonify({"error": "Proposal not found"}), 404
+
         if not proposal.get("org_evaluation"):
             return jsonify({"error": "No evaluation recorded for this proposal"}), 400
         
@@ -2341,13 +2366,16 @@ def api_org_approve_publication():
 
 @app.route("/api/network/coordination/proposals/<proposal_id>/decline", methods=["POST"])
 def api_decline_proposal(proposal_id):
-    """Decline a coordination proposal."""
+    """Decline a coordination proposal.
+
+    Privacy boundary: returns the sanitized PUBLIC projection only.
+    """
     try:
-        from agent.coordination.proposal import decline_proposal
+        from agent.coordination.proposal import decline_proposal, get_public_view
         proposal = decline_proposal(proposal_id)
         if not proposal:
             return jsonify({"error": "Proposal not found"}), 404
-        return jsonify({"proposal": proposal})
+        return jsonify({"proposal": get_public_view(proposal)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

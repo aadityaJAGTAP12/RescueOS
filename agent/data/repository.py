@@ -15,6 +15,7 @@ the repository interface, which makes the data source swappable.
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 from typing import Optional
 
 from agent.data.models import (
@@ -244,6 +245,28 @@ class DataRepository:
     def mark_notification_read(self, notification_id: str) -> None:
         raise NotImplementedError
 
+    # --- Coordination Proposals (Item #5 Step 2 — PostgreSQL authoritative) ---
+
+    def create_proposal(self, proposal: dict) -> dict:
+        """Store a new coordination proposal (plain dict, Phase 7H schema)."""
+        raise NotImplementedError
+
+    def get_proposal(self, proposal_id: str) -> Optional[dict]:
+        """Fetch one coordination proposal by id, or None."""
+        raise NotImplementedError
+
+    def list_proposals(self, need_id: str = None, organization_id: str = None,
+                       status: str = None) -> list[dict]:
+        """List coordination proposals with optional filters."""
+        raise NotImplementedError
+
+    def update_proposal(self, proposal_id: str, updates: dict,
+                        expected_statuses: list = None) -> Optional[dict]:
+        """Apply a partial update; if expected_statuses is given, only update
+        when the current status matches (atomic single-row guard). Returns the
+        updated proposal or None when not found / guard not met."""
+        raise NotImplementedError
+
 
 # ---------------------------------------------------------------------------
 # In-Memory Implementation
@@ -274,6 +297,8 @@ class InMemoryRepository(DataRepository):
         self._operation_participants: dict[str, list[dict]] = {}  # operation_id -> [{org_id, role, joined_at}]
         self._activity_events: list[ActivityEvent] = []
         self._notifications: dict[str, Notification] = {}
+        # Item #5 Step 2: coordination proposals (plain dicts, Phase 7H schema)
+        self._proposals: dict[str, dict] = {}
 
     def clear(self):
         """Reset all data (for testing)."""
@@ -292,6 +317,7 @@ class InMemoryRepository(DataRepository):
         self._operation_participants.clear()
         self._activity_events.clear()
         self._notifications.clear()
+        self._proposals.clear()
 
     # --- Districts ---
 
@@ -681,6 +707,49 @@ class InMemoryRepository(DataRepository):
         if notif:
             notif.read = True
 
+    # --- Coordination Proposals (Item #5 Step 2) ---
+
+    def create_proposal(self, proposal: dict) -> dict:
+        stored = dict(proposal)
+        # Match the PostgreSQL contract: created_at/updated_at are NOT NULL
+        # with a now() server default — never missing or NULL (Item 5B Bug 1).
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if not stored.get("created_at"):
+            stored["created_at"] = now_iso
+        if not stored.get("updated_at"):
+            stored["updated_at"] = now_iso
+        self._proposals[stored["id"]] = stored
+        return stored
+
+    def get_proposal(self, proposal_id: str) -> Optional[dict]:
+        proposal = self._proposals.get(proposal_id)
+        return dict(proposal) if proposal else None
+
+    def list_proposals(self, need_id: str = None, organization_id: str = None,
+                       status: str = None) -> list[dict]:
+        results = list(self._proposals.values())
+        if need_id:
+            results = [p for p in results if p.get("need_id") == need_id]
+        if organization_id:
+            results = [p for p in results if p.get("organization_id") == organization_id]
+        if status:
+            results = [p for p in results if p.get("status") == status]
+        results.sort(key=lambda p: p.get("created_at", ""), reverse=True)
+        return [dict(p) for p in results]
+
+    def update_proposal(self, proposal_id: str, updates: dict,
+                        expected_statuses: list = None) -> Optional[dict]:
+        proposal = self._proposals.get(proposal_id)
+        if not proposal:
+            return None
+        if expected_statuses is not None and proposal.get("status") not in expected_statuses:
+            return None
+        updated = dict(proposal)
+        updated.update(updates)
+        updated["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self._proposals[proposal_id] = updated
+        return updated
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -785,7 +854,17 @@ def set_repository(repo: DataRepository) -> None:
 
 
 def reset_repository() -> None:
-    """Reset to a fresh InMemoryRepository (for testing)."""
+    """Drop the cached repository so the next get_repository() re-selects
+    from the environment (DATABASE_URL → PostgresRepository, RELIEFOS_MEMORY
+    or default → InMemoryRepository).
+
+    NOTE: this does NOT force memory mode. Tests that need memory must set
+    RELIEFOS_MEMORY=1 (or call set_repository(InMemoryRepository())
+    explicitly); tests claiming to exercise PostgreSQL must assert
+    type(get_repository()).__name__ == "PostgresRepository". A previous
+    version of this function unconditionally cached an InMemoryRepository,
+    which silently downgraded DATABASE_URL runs to memory mode.
+    """
     global _default_repository, _repository_explicitly_set
-    _default_repository = InMemoryRepository()
+    _default_repository = None
     _repository_explicitly_set = False

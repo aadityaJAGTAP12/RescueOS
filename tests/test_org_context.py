@@ -18,13 +18,24 @@ seam, WITHOUT claiming any security enforcement:
 NOTE: this is identity/context separation, not authentication. Any client
 can select any org by setting the cookie; there is deliberately no
 password or credential anywhere in this flow.
+
+DB-safety (Item 5B): this file does NOT force RELIEFOS_MEMORY — repository
+selection is resolved explicitly by tests/conftest.py and asserted there,
+so the suite runs identically against InMemoryRepository and real
+PostgreSQL. All org ids are unique per run (never the production
+org_alpha/org_beta) and every run's footprint is cleaned up before and
+after each test:
+  - shared-network rows (organizations, resource_offers, needs) are
+    deleted from the repository when PostgreSQL is active;
+  - the private workspace is FILE-backed (data/orgs/<org_id>/*.json) and
+    its dedicated org dirs are removed.
+Production authorization semantics are untouched — cleanup happens at the
+data layer only.
 """
 
-import os
-
-os.environ["RELIEFOS_MEMORY"] = "1"
-
 import json
+import os
+import shutil
 import uuid
 
 import pytest
@@ -36,21 +47,78 @@ from agent.org_context import (
     resolve_current_org,
 )
 
-# Private workspace state is FILE-backed (data/orgs/<org_id>/*.json) and
-# persists across test runs, so every seeded item carries a unique per-run
-# tag. Isolation is asserted via tag membership + cross-org exclusion rather
-# than exact file contents.
+# Unique per-run org ids: never collide with production data
+# (org_alpha/org_beta) in either the file-backed workspace or the DB.
+RUN_TAG = uuid.uuid4().hex[:8]
+
+def _oid(base: str) -> str:
+    return f"org_ctx_{base}_{RUN_TAG}"
+
+A_ORG = _oid("alpha")     # was org_alpha
+B_ORG = _oid("beta")      # was org_beta
+E_ORG = _oid("evil")      # was org_evil
+NEED_ID = f"need_ctx_{RUN_TAG}"
+
+_ORGS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "orgs",
+)
+
+# Offers created by the cookieless default-org tests (server-side ids);
+# deleted by id in the cleanup fixture.
+_DEFAULT_ORG_OFFER_IDS: set = set()
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+def _purge_file_state():
+    for org in (A_ORG, B_ORG, E_ORG):
+        shutil.rmtree(os.path.join(_ORGS_DIR, org), ignore_errors=True)
+
+
+def _purge_db_rows():
+    """In PostgreSQL mode, delete this run's shared-network rows before AND
+    after each test. Targeted to this run's unique ids — production data is
+    never touched. Private resources/teams/missions are file-backed and
+    covered by _purge_file_state."""
+    if os.environ.get("RELIEFOS_MEMORY", "").strip() in ("1", "true", "yes"):
+        return
+    if not os.environ.get("DATABASE_URL", "").strip():
+        return
+    from agent.data.repository import get_repository
+    from agent.data.schema import (
+        coordination_proposals, organizations, needs, resource_offers,
+    )
+    repo = get_repository()
+    assert type(repo).__name__ == "PostgresRepository", (
+        "DATABASE_URL is set but repository is not PostgresRepository — "
+        "DB-mode run would silently test the wrong backend"
+    )
+    with repo._engine.begin() as conn:
+        conn.execute(coordination_proposals.delete().where(
+            coordination_proposals.c.organization_id.in_([A_ORG, B_ORG, E_ORG])
+        ))
+        conn.execute(resource_offers.delete().where(
+            resource_offers.c.organization_id.in_([A_ORG, B_ORG, E_ORG])
+        ))
+        if _DEFAULT_ORG_OFFER_IDS:
+            conn.execute(resource_offers.delete().where(
+                resource_offers.c.id.in_(list(_DEFAULT_ORG_OFFER_IDS))
+            ))
+        conn.execute(needs.delete().where(needs.c.id == NEED_ID))
+        conn.execute(organizations.delete().where(
+            organizations.c.id.in_([A_ORG, B_ORG, E_ORG])
+        ))
+
 
 @pytest.fixture(autouse=True)
 def fresh_repo():
     reset_repository()
     repo = get_repository()
+    _purge_file_state()
+    _purge_db_rows()
     yield repo
+    _purge_file_state()
+    _purge_db_rows()
+    _DEFAULT_ORG_OFFER_IDS.clear()
     reset_repository()
 
 
@@ -130,16 +198,16 @@ class TestSessionOrgEndpoints:
         assert data["org_id"] == DEFAULT_ORG_ID
 
     def test_set_then_get_session_org(self, client):
-        _create_org(client, "org_alpha", "Alpha NGO")
-        resp = _select_org(client, "org_alpha")
+        _create_org(client, A_ORG, "Alpha NGO")
+        resp = _select_org(client, A_ORG)
         assert resp.headers.get("Set-Cookie") is not None
 
         data = client.get("/api/session/org").get_json()
-        assert data["org_id"] == "org_alpha"
+        assert data["org_id"] == A_ORG
         assert data["registered"] is True
 
     def test_set_session_org_unknown_org_rejected(self, client):
-        resp = client.post("/api/session/org", json={"org_id": "org_missing"})
+        resp = client.post("/api/session/org", json={"org_id": _oid("missing")})
         assert resp.status_code == 404
 
     def test_set_session_org_requires_org_id(self, client):
@@ -153,18 +221,18 @@ class TestSessionOrgEndpoints:
 
 class TestOrgSwitchingIsolation:
     def test_private_endpoints_follow_selected_org(self, client):
-        _create_org(client, "org_alpha", "Alpha NGO")
-        _create_org(client, "org_beta", "Beta NGO")
+        _create_org(client, A_ORG, "Alpha NGO")
+        _create_org(client, B_ORG, "Beta NGO")
 
-        tag_a = _seed_private_state(client, "org_alpha")
-        tag_b = _seed_private_state(client, "org_beta")
+        tag_a = _seed_private_state(client, A_ORG)
+        tag_b = _seed_private_state(client, B_ORG)
 
-        # Acting as org_alpha: this run's items visible, beta's tagged items not
-        _select_org(client, "org_alpha")
+        # Acting as A: this run's items visible, B's tagged items not
+        _select_org(client, A_ORG)
         resources = client.get("/api/my-org/resources").get_json()["resources"]
         teams = client.get("/api/my-org/teams").get_json()["teams"]
         missions = client.get("/api/my-org/missions").get_json()["missions"]
-        assert all(r["org_id"] == "org_alpha" for r in resources)
+        assert all(r["org_id"] == A_ORG for r in resources)
         assert any(r["resource_type"] == f"widget_{tag_a}" for r in resources)
         assert not any(r["resource_type"] == f"widget_{tag_b}" for r in resources)
         assert any(t["name"] == f"Team {tag_a}" for t in teams)
@@ -172,12 +240,12 @@ class TestOrgSwitchingIsolation:
         assert any(m["name"] == f"Mission {tag_a}" for m in missions)
         assert not any(m["name"] == f"Mission {tag_b}" for m in missions)
 
-        # Switch to org_beta — org_alpha's private data must be invisible
-        _select_org(client, "org_beta")
+        # Switch to B — A's private data must be invisible
+        _select_org(client, B_ORG)
         resources = client.get("/api/my-org/resources").get_json()["resources"]
         teams = client.get("/api/my-org/teams").get_json()["teams"]
         missions = client.get("/api/my-org/missions").get_json()["missions"]
-        assert all(r["org_id"] == "org_beta" for r in resources)
+        assert all(r["org_id"] == B_ORG for r in resources)
         assert any(r["resource_type"] == f"widget_{tag_b}" for r in resources)
         assert not any(r["resource_type"] == f"widget_{tag_a}" for r in resources)
         assert any(t["name"] == f"Team {tag_b}" for t in teams)
@@ -187,12 +255,12 @@ class TestOrgSwitchingIsolation:
 
         # And the summary endpoint reports the selected org
         summary = client.get("/api/my-org/summary").get_json()
-        assert summary["org_id"] == "org_beta"
+        assert summary["org_id"] == B_ORG
 
     def test_publish_offer_uses_selected_org(self, client):
-        _create_org(client, "org_alpha", "Alpha NGO")
-        _create_org(client, "org_beta", "Beta NGO")
-        _select_org(client, "org_alpha")
+        _create_org(client, A_ORG, "Alpha NGO")
+        _create_org(client, B_ORG, "Beta NGO")
+        _select_org(client, A_ORG)
 
         resp = client.post(
             "/api/my-org/publish-offer",
@@ -200,21 +268,23 @@ class TestOrgSwitchingIsolation:
         )
         assert resp.status_code == 201, resp.get_json()
         offer = resp.get_json()["offer"]
-        assert offer["organization_id"] == "org_alpha"
+        assert offer["organization_id"] == A_ORG
 
-        offers = client.get("/api/offers?organization_id=org_alpha").get_json()["offers"]
+        offers = client.get(
+            f"/api/offers?organization_id={A_ORG}"
+        ).get_json()["offers"]
         assert any(o["id"] == offer["id"] for o in offers)
 
     def test_ngo_agent_analysis_uses_selected_org(self, client):
-        _create_org(client, "org_alpha", "Alpha NGO")
-        _create_org(client, "org_beta", "Beta NGO")
-        tag_a = _seed_private_state(client, "org_alpha")
-        _seed_private_state(client, "org_beta")
-        _select_org(client, "org_alpha")
+        _create_org(client, A_ORG, "Alpha NGO")
+        _create_org(client, B_ORG, "Beta NGO")
+        tag_a = _seed_private_state(client, A_ORG)
+        _seed_private_state(client, B_ORG)
+        _select_org(client, A_ORG)
 
-        resource_type = f"widget_{tag_a}"  # only alpha holds this type
+        resource_type = f"widget_{tag_a}"  # only A holds this type
         need = {
-            "id": "need_1",
+            "id": NEED_ID,
             "need_type": resource_type,
             "title": "Widgets needed",
             "urgency": "high",
@@ -225,22 +295,22 @@ class TestOrgSwitchingIsolation:
         resp = client.post("/api/my-org/agent/analyze-need", json={"need": need})
         assert resp.status_code == 200, resp.get_json()
         result = resp.get_json()
-        # Alpha holds the tagged resource type (7 units, seeded above), so the
-        # analysis must reflect ALPHA's private inventory. Beta's tagged items
+        # A holds the tagged resource type (7 units, seeded above), so the
+        # analysis must reflect A's private inventory. B's tagged items
         # must never appear. (The analysis body does not embed the org id;
-        # the tagged resource type can only come from alpha's private store.)
+        # the tagged resource type can only come from A's private store.)
         blob = json.dumps(result)
         assert f"widget_{tag_a}" in blob
-        assert "org_beta" not in blob
+        assert B_ORG not in blob
         # The proposed publication (if any) must name the selected org.
         if result.get("proposed_publication"):
-            assert result["proposed_publication"].get("organization_id", "org_alpha") == "org_alpha"
+            assert result["proposed_publication"].get("organization_id", A_ORG) == A_ORG
 
     def test_situation_endpoint_reports_selected_org(self, client):
-        _create_org(client, "org_beta", "Beta NGO")
-        _select_org(client, "org_beta")
+        _create_org(client, B_ORG, "Beta NGO")
+        _select_org(client, B_ORG)
         situation = client.get("/api/my-org/agent/situation").get_json()
-        assert situation["org_id"] == "org_beta"
+        assert situation["org_id"] == B_ORG
 
 
 # ---------------------------------------------------------------------------
@@ -250,9 +320,9 @@ class TestOrgSwitchingIsolation:
 class TestTrustBoundary:
     def test_publish_offer_ignores_client_org_id(self, client):
         """A body org_id different from the session context must NOT win."""
-        _create_org(client, "org_alpha", "Alpha NGO")
-        _create_org(client, "org_evil", "Evil Impersonator")
-        _select_org(client, "org_alpha")
+        _create_org(client, A_ORG, "Alpha NGO")
+        _create_org(client, E_ORG, "Evil Impersonator")
+        _select_org(client, A_ORG)
 
         resp = client.post(
             "/api/my-org/publish-offer",
@@ -260,27 +330,27 @@ class TestTrustBoundary:
                 "resource_type": "boat",
                 "quantity": 5,
                 "unit": "units",
-                "organization_id": "org_evil",  # attacker-supplied
+                "organization_id": E_ORG,  # attacker-supplied
                 "organization_name": "Evil Impersonator",
             },
         )
         assert resp.status_code == 201, resp.get_json()
         offer = resp.get_json()["offer"]
         # Server-derived context wins:
-        assert offer["organization_id"] == "org_alpha"
-        assert offer["organization_id"] != "org_evil"
+        assert offer["organization_id"] == A_ORG
+        assert offer["organization_id"] != E_ORG
 
         # No offer was recorded for the attacker org.
         evil_offers = client.get(
-            "/api/offers?organization_id=org_evil"
+            f"/api/offers?organization_id={E_ORG}"
         ).get_json()["offers"]
         assert evil_offers == []
 
     def test_legacy_offers_post_ignores_client_org_id(self, client):
         """POST /api/offers must also derive the org from the session."""
-        _create_org(client, "org_alpha", "Alpha NGO")
-        _create_org(client, "org_evil", "Evil Impersonator")
-        _select_org(client, "org_alpha")
+        _create_org(client, A_ORG, "Alpha NGO")
+        _create_org(client, E_ORG, "Evil Impersonator")
+        _select_org(client, A_ORG)
 
         resp = client.post(
             "/api/offers",
@@ -288,16 +358,16 @@ class TestTrustBoundary:
                 "resource_type": "water",
                 "quantity": 10,
                 "unit": "liters",
-                "organization_id": "org_evil",  # attacker-supplied
+                "organization_id": E_ORG,  # attacker-supplied
             },
         )
         assert resp.status_code == 201, resp.get_json()
-        assert resp.get_json()["offer"]["organization_id"] == "org_alpha"
+        assert resp.get_json()["offer"]["organization_id"] == A_ORG
 
     def test_private_endpoints_have_no_client_org_input(self, client):
         """Private endpoints expose no way to name another org."""
-        _create_org(client, "org_alpha", "Alpha NGO")
-        _select_org(client, "org_alpha")
+        _create_org(client, A_ORG, "Alpha NGO")
+        _select_org(client, A_ORG)
         # Even stuffing an org_id field into the payload changes nothing:
         resp = client.post(
             "/api/my-org/resources",
@@ -305,22 +375,22 @@ class TestTrustBoundary:
                 "resource_type": "boat",
                 "quantity": 1,
                 "unit": "units",
-                "org_id": "org_evil",
-                "organization_id": "org_evil",
+                "org_id": E_ORG,
+                "organization_id": E_ORG,
             },
         )
         assert resp.status_code == 201
         resource = resp.get_json()["resource"]
-        assert resource["org_id"] == "org_alpha"
+        assert resource["org_id"] == A_ORG
 
     def test_old_org_scoped_routes_are_gone(self, client):
         """/api/orgs/<org_id>/... trusted client-supplied org ids; they must 404."""
         for path in (
-            "/api/orgs/org_demo/summary",
-            "/api/orgs/org_demo/resources",
-            "/api/orgs/org_demo/teams",
-            "/api/orgs/org_demo/missions",
-            "/api/orgs/org_demo/publish-offer",
+            f"/api/orgs/{_oid('demo')}/summary",
+            f"/api/orgs/{_oid('demo')}/resources",
+            f"/api/orgs/{_oid('demo')}/teams",
+            f"/api/orgs/{_oid('demo')}/missions",
+            f"/api/orgs/{_oid('demo')}/publish-offer",
         ):
             resp = client.get(path)
             if resp.status_code == 405:
@@ -335,7 +405,7 @@ class TestTrustBoundary:
 
 class TestCookielessFallback:
     def test_my_org_without_cookie_uses_default_org(self, client):
-        # org_demo may not exist in the fresh repo — the endpoint still
+        # The default org may not exist in a fresh repo — the endpoint still
         # resolves to the default org id rather than erroring.
         resp = client.get("/api/my-org/resources")
         assert resp.status_code == 200
@@ -349,3 +419,6 @@ class TestCookielessFallback:
         assert resp.status_code == 201
         offer = resp.get_json()["offer"]
         assert offer["organization_id"] == DEFAULT_ORG_ID
+        # Track the offer id so the cleanup fixture can remove it from the
+        # durable store in PostgreSQL mode.
+        _DEFAULT_ORG_OFFER_IDS.add(offer["id"])

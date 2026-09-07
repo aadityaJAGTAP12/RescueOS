@@ -19,6 +19,69 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # ---------------------------------------------------------------------------
+# DB-mode fixture: these tests use fixed org ids (org_test/org_1) that must
+# exist in PostgreSQL when DATABASE_URL is set (resource_offers has a real
+# FK to organizations). Memory mode has no FK enforcement, so this is a
+# no-op there.
+# ---------------------------------------------------------------------------
+
+_DB_ORGS = ("org_test", "org_1")
+_CREATED_PROPOSAL_IDS: set = set()
+
+
+@pytest.fixture(autouse=True)
+def _ensure_db_orgs():
+    if os.environ.get("RELIEFOS_MEMORY", "").strip() in ("1", "true", "yes") or not \
+            os.environ.get("DATABASE_URL", "").strip():
+        yield
+        return
+    from agent.data.repository import get_repository
+    from agent.data.models import Organization
+    from sqlalchemy import select
+    from agent.data.schema import coordination_proposals
+    repo = get_repository()
+    assert type(repo).__name__ == "PostgresRepository", (
+        "DATABASE_URL set but repository is not PostgresRepository"
+    )
+    for org_id, name in (("org_test", "Test Org"), ("org_1", "Org 1")):
+        if repo.get_organization(org_id) is None:
+            repo.create_organization(Organization(id=org_id, name=name))
+    # Snapshot the pre-existing proposal ids for this module's orgs BEFORE
+    # the test runs, so teardown deletes exactly the rows the test added.
+    with repo._engine.begin() as conn:
+        _CREATED_PROPOSAL_IDS.clear()
+        _CREATED_PROPOSAL_IDS.update(
+            row.id for row in conn.execute(
+                select(coordination_proposals.c.id).where(
+                    coordination_proposals.c.organization_id.in_(_DB_ORGS)
+                )
+            )
+        )
+    yield
+    # Proposals created by these tests are cleaned up to keep the DB tidy.
+    # CRITICAL (Item 5B): cleanup deletes ONLY ids that appeared during the
+    # test (current minus the pre-test snapshot) — NEVER by organization_id.
+    # The org_1 batch includes the legitimate migrated legacy proposals; an
+    # organization-scoped delete here wiped the whole migrated batch during
+    # the Item 5B DB regression run. The orgs are left in place (harmless,
+    # reused across runs).
+    with repo._engine.begin() as conn:
+        current_ids = {
+            row.id for row in conn.execute(
+                select(coordination_proposals.c.id).where(
+                    coordination_proposals.c.organization_id.in_(_DB_ORGS)
+                )
+            )
+        }
+        new_ids = current_ids - _CREATED_PROPOSAL_IDS
+        if new_ids:
+            conn.execute(coordination_proposals.delete().where(
+                coordination_proposals.c.id.in_(list(new_ids))
+            ))
+        _CREATED_PROPOSAL_IDS.clear()
+
+
+# ---------------------------------------------------------------------------
 # Test: Coordination Proposal lifecycle
 # ---------------------------------------------------------------------------
 
