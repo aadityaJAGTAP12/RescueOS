@@ -12,6 +12,9 @@ async function api(path, options = {}) {
 }
 
 async function seed() {
+  // Ensure the default org exists, then select it via the identity seam.
+  // Org context is now session-derived (reliefos_org_id cookie) — no
+  // hardcoded org id is trusted anywhere.
   await api("/api/organizations", {
     method: "POST",
     body: JSON.stringify({
@@ -20,6 +23,10 @@ async function seed() {
       organization_type: "ngo",
       description: "Browser diagnostic organization",
     }),
+  });
+  await api("/api/session/org", {
+    method: "POST",
+    body: JSON.stringify({ org_id: "org_demo" }),
   });
 
   const needs = [

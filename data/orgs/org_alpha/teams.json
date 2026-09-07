@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Team tag5dde0e46",
+    "id": "team_1f7850f4",
+    "org_id": "org_alpha",
+    "created_at": "2026-09-07T07:25:24.465751+00:00",
+    "updated_at": "2026-09-07T07:25:24.465751+00:00",
+    "status": "available",
+    "members": [],
+    "current_assignment": null,
+    "location": null
+  },
+  {
+    "name": "Team tagc5cf211e",
+    "id": "team_7b36448d",
+    "org_id": "org_alpha",
+    "created_at": "2026-09-07T07:25:24.492411+00:00",
+    "updated_at": "2026-09-07T07:25:24.492411+00:00",
+    "status": "available",
+    "members": [],
+    "current_assignment": null,
+    "location": null
+  }
+]

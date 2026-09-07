@@ -29,10 +29,13 @@ async function run() {
       reporter_id: "cdp-trace",
     }),
   });
-  await api("/api/orgs/org_demo/resources", {
+  await api("/api/session/org", {
+    method: "POST", body: JSON.stringify({ org_id: "org_demo" }),
+  });
+  await api("/api/my-org/resources", {
     method: "POST", body: JSON.stringify({ resource_type: "boat", quantity: 2, unit: "units", location: "Jorhat" }),
   });
-  await api("/api/orgs/org_demo/teams", { method: "POST", body: JSON.stringify({ name: "Team A" }) });
+  await api("/api/my-org/teams", { method: "POST", body: JSON.stringify({ name: "Team A" }) });
 
   const browser = await puppeteer.launch({
     headless: "new",

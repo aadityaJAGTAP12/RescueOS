@@ -174,3 +174,28 @@ All visible operational controls either:
 - Are clearly empty/unavailable with explicit empty state messaging
 
 No fake/inert controls remain. No synthetic data added. No database mutation.
+
+---
+
+## Appendix: Organization Identity Seam verification (2026-09-07)
+
+Identity-only seam (`agent/org_context.py` → `resolve_current_org`), NOT
+authentication. Live-server verification against `RELIEFOS_MEMORY=1
+python -m agent.api` (real HTTP via curl, two real organizations):
+
+1. **Org A context** — `POST /api/session/org {org_id: org_verify_a}`;
+   seeded 1 resource / 1 team / 1 mission via `/api/my-org/*`; every write
+   stamped `org_id: org_verify_a`; reads + `/api/my-org/agent/situation`
+   + `/api/my-org/agent/analyze-need` all resolved org A (analysis: "Can
+   potentially provide 2 units ... 11 units of res_OF_ORG_A available").
+2. **Switch to org B** — same need analyzed by B: "Cannot respond — no
+   available res_OF_ORG_A resources." B saw **zero** of A's private
+   resources/teams/missions. Multi-org separation works structurally.
+3. **Trust boundary** — B's session posted `organization_id:
+   "org_verify_a"` in the body of both `POST /api/my-org/publish-offer` and
+   `POST /api/offers`: both offers were recorded for **org_verify_b** (the
+   session-derived org); org A got 0 offers. Server-derived context wins.
+4. **Old routes gone** — `GET /api/orgs/<org_id>/...` → 404.
+
+Automated coverage: `tests/test_org_context.py` (17 backend tests),
+`frontend/src/__tests__/orgContext.test.jsx` (8 frontend tests).

@@ -9,9 +9,11 @@ import { cn } from "../../lib/utils";
 import { formatDistanceToNow } from "date-fns";
 
 // ---------------------------------------------------------------------------
-// Mock org ID — in production this comes from auth
+// Org identity: session-derived via /api/session/org (see lib/orgContext.js).
+// IDENTITY ONLY — NOT AUTHENTICATION. All org-scoped fetches below hit the
+// /api/my-org/* endpoints, which re-derive the org server-side from the
+// session context; no org id is trusted from the client.
 // ---------------------------------------------------------------------------
-const CURRENT_ORG_ID = "org_demo";
 
 // ---------------------------------------------------------------------------
 // Organization Summary Panel
@@ -28,7 +30,7 @@ function OrgSummary({ summary, onRefresh }) {
         <div className="flex items-center gap-2 mb-2">
           <Shield className="w-4 h-4 text-[#4ea8de]" />
           <span className="text-[13px] font-semibold text-[#c8d6e5]">
-            {summary.profile?.name || CURRENT_ORG_ID}
+            {summary.profile?.name || summary.org_id}
           </span>
         </div>
         {summary.profile?.description && (
@@ -85,7 +87,8 @@ function PrivateResources({ orgId, onRefresh }) {
   const [showAdd, setShowAdd] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/orgs/${orgId}/resources`)
+    // Session org is derived server-side; orgId only re-triggers the fetch.
+    fetch(`/api/my-org/resources`)
       .then(r => r.json())
       .then(data => setResources(data.resources || []))
       .catch(() => {})
@@ -94,7 +97,7 @@ function PrivateResources({ orgId, onRefresh }) {
 
   const handleAdd = async (resource) => {
     try {
-      const resp = await fetch(`/api/orgs/${orgId}/resources`, {
+      const resp = await fetch(`/api/my-org/resources`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(resource),
@@ -111,7 +114,7 @@ function PrivateResources({ orgId, onRefresh }) {
 
   const handleStatusChange = async (resourceId, newStatus) => {
     try {
-      const resp = await fetch(`/api/orgs/${orgId}/resources/${resourceId}`, {
+      const resp = await fetch(`/api/my-org/resources/${resourceId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
@@ -273,7 +276,8 @@ function PrivateTeams({ orgId }) {
   const [showAdd, setShowAdd] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/orgs/${orgId}/teams`)
+    // Session org is derived server-side; orgId only re-triggers the fetch.
+    fetch(`/api/my-org/teams`)
       .then(r => r.json())
       .then(data => setTeams(data.teams || []))
       .catch(() => {})
@@ -282,7 +286,7 @@ function PrivateTeams({ orgId }) {
 
   const handleAdd = async (team) => {
     try {
-      const resp = await fetch(`/api/orgs/${orgId}/teams`, {
+      const resp = await fetch(`/api/my-org/teams`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(team),
@@ -387,7 +391,8 @@ function PrivateMissions({ orgId }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/orgs/${orgId}/missions`)
+    // Session org is derived server-side; orgId only re-triggers the fetch.
+    fetch(`/api/my-org/missions`)
       .then(r => r.json())
       .then(data => setMissions(data.missions || []))
       .catch(() => {})
@@ -452,9 +457,9 @@ function NGOAgentPanel({ orgId, summary }) {
   const [publishMessage, setPublishMessage] = useState(null);
   const { state, refreshAll } = useWorkspace();
 
-  // Fetch situation summary
+  // Fetch situation summary (session org — server derives it, orgId unused)
   useEffect(() => {
-    fetch(`/api/orgs/${orgId}/agent/situation`)
+    fetch(`/api/my-org/agent/situation`)
       .then(r => r.json())
       .then(data => setSituation(data))
       .catch(() => {})
@@ -468,7 +473,7 @@ function NGOAgentPanel({ orgId, summary }) {
     setPublishError(null);
     setPublishMessage(null);
     try {
-      const resp = await fetch(`/api/orgs/${orgId}/agent/analyze-need`, {
+      const resp = await fetch(`/api/my-org/agent/analyze-need`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ need }),
@@ -493,7 +498,7 @@ function NGOAgentPanel({ orgId, summary }) {
     setPublishError(null);
     setPublishMessage(null);
     try {
-      const resp = await fetch(`/api/orgs/${orgId}/publish-offer`, {
+      const resp = await fetch(`/api/my-org/publish-offer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(publication),
@@ -727,10 +732,13 @@ export default function OrganizationWorkspace({ onOpenNeed }) {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("overview");
 
+  const { state, refreshAll } = useWorkspace();
+  const currentOrgId = state.orgId;
+
   const fetchSummary = useCallback(async () => {
     setLoading(true);
     try {
-      const resp = await fetch(`/api/orgs/${CURRENT_ORG_ID}/summary`);
+      const resp = await fetch(`/api/my-org/summary`);
       if (resp.ok) {
         const data = await resp.json();
         setSummary(data);
@@ -744,7 +752,7 @@ export default function OrganizationWorkspace({ onOpenNeed }) {
 
   useEffect(() => {
     fetchSummary();
-  }, [fetchSummary]);
+  }, [fetchSummary, currentOrgId]);
 
   const tabs = [
     { id: "overview", label: "Overview", icon: Shield },
@@ -763,7 +771,7 @@ export default function OrganizationWorkspace({ onOpenNeed }) {
           <Shield className="w-4 h-4 text-[#4ea8de]" />
           <span className="text-[13px] font-semibold text-[#c8d6e5]">My Organization</span>
         </div>
-        <div className="text-[9px] text-[#6b7d93] mt-0.5">{CURRENT_ORG_ID}</div>
+        <div className="text-[9px] text-[#6b7d93] mt-0.5">{currentOrgId || "…"}</div>
       </div>
 
       {/* Tab bar */}
@@ -795,11 +803,11 @@ export default function OrganizationWorkspace({ onOpenNeed }) {
         ) : (
           <>
             {activeTab === "overview" && <OrgSummary summary={summary} onRefresh={fetchSummary} />}
-            {activeTab === "ai" && <NGOAgentPanel orgId={CURRENT_ORG_ID} summary={summary} />}
-            {activeTab === "resources" && <PrivateResources orgId={CURRENT_ORG_ID} onRefresh={fetchSummary} />}
-            {activeTab === "teams" && <PrivateTeams orgId={CURRENT_ORG_ID} />}
-            {activeTab === "missions" && <PrivateMissions orgId={CURRENT_ORG_ID} />}
-            {activeTab === "requests" && <NetworkRequests orgId={CURRENT_ORG_ID} onOpenNeed={onOpenNeed} />}
+            {activeTab === "ai" && <NGOAgentPanel orgId={currentOrgId} summary={summary} />}
+            {activeTab === "resources" && <PrivateResources orgId={currentOrgId} onRefresh={fetchSummary} />}
+            {activeTab === "teams" && <PrivateTeams orgId={currentOrgId} />}
+            {activeTab === "missions" && <PrivateMissions orgId={currentOrgId} />}
+            {activeTab === "requests" && <NetworkRequests orgId={currentOrgId} onOpenNeed={onOpenNeed} />}
           </>
         )}
       </div>

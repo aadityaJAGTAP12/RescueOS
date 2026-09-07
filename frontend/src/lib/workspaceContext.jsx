@@ -1,4 +1,5 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useRef } from "react";
+import { getCurrentOrgId, selectOrg } from "./orgContext";
 
 // -------------------------------------------------------------------
 // Initial state
@@ -82,6 +83,12 @@ const initialState = {
 
   // Selected entity (for map/panel sync)
   selectedEntity: null,
+
+  // Organization identity context (session-derived via /api/session/org).
+  // IDENTITY ONLY — NOT AUTHENTICATION (see lib/orgContext.js).
+  orgId: null,
+  orgLoading: false,
+  orgError: null,
 
   // Search
   searchQuery: "",
@@ -238,6 +245,23 @@ function workspaceReducer(state, action) {
 
     case "SET_SELECTED_ENTITY":
       return { ...state, selectedEntity: action.payload };
+
+    case "SET_ORG":
+      return {
+        ...state,
+        orgId: action.payload.orgId,
+        orgLoading: false,
+        orgError: null,
+      };
+
+    case "SET_ORG_LOADING":
+      return { ...state, orgLoading: action.payload };
+
+    case "SET_ORG_ERROR":
+      return { ...state, orgError: action.payload, orgLoading: false };
+
+    case "CLEAR_ORG_DATA":
+      return { ...state, needs: [], offers: [], operations: [] };
 
     case "SET_SEARCH_QUERY":
       return { ...state, searchQuery: action.payload };
@@ -635,6 +659,43 @@ export function WorkspaceProvider({ children }) {
     dispatch({ type: "SET_SELECTED_ENTITY", payload: entity });
   }, []);
 
+  /**
+   * Resolve the session org via the identity seam and store it in state.
+   * Called on provider mount; the resolved id is display/reference only —
+   * privileged /api/my-org/* endpoints always re-derive the org server-side.
+   */
+  const refreshOrgContext = useCallback(async () => {
+    dispatch({ type: "SET_ORG_LOADING", payload: true });
+    try {
+      const orgId = await getCurrentOrgId({ allowFallback: false });
+      dispatch({ type: "SET_ORG", payload: { orgId } });
+    } catch (err) {
+      console.error("Failed to resolve org context:", err);
+      dispatch({ type: "SET_ORG_ERROR", payload: err.message || "Failed to resolve organization" });
+    }
+  }, []);
+
+  /**
+   * Select (or create + select) the session organization, then refresh all
+   * org-scoped operational data so the workspace reflects the new context.
+   */
+  const switchOrganization = useCallback(
+    async (options) => {
+      dispatch({ type: "SET_ORG_LOADING", payload: true });
+      try {
+        const result = await selectOrg(options);
+        dispatch({ type: "CLEAR_ORG_DATA" });
+        dispatch({ type: "SET_ORG", payload: { orgId: result.org_id } });
+        await refreshAll();
+        return result;
+      } catch (err) {
+        dispatch({ type: "SET_ORG_ERROR", payload: err.message || "Failed to switch organization" });
+        throw err;
+      }
+    },
+    [refreshAll]
+  );
+
   const performSearch = useCallback((query) => {
     dispatch({ type: "SET_SEARCH_QUERY", payload: query });
     if (!query || query.length < 2) {
@@ -707,6 +768,7 @@ export function WorkspaceProvider({ children }) {
 
   // --- Initial data load ---
   useEffect(() => {
+    refreshOrgContext();
     fetchDistricts();
     fetchSettlements();
     refreshAll();
@@ -782,6 +844,8 @@ export function WorkspaceProvider({ children }) {
     setSelectedEntity,
     performSearch,
     refreshAll,
+    refreshOrgContext,
+    switchOrganization,
     fetchFloodData,
     fetchRoads,
     fetchBridges,

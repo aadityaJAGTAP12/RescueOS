@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Mission tag0f687d35",
+    "id": "mis_1f9da870",
+    "org_id": "org_beta",
+    "created_at": "2026-09-07T07:25:24.473750+00:00",
+    "updated_at": "2026-09-07T07:25:24.473750+00:00",
+    "status": "PLANNING",
+    "linked_need_id": null,
+    "assigned_team_id": null,
+    "assigned_resources": [],
+    "notes": ""
+  },
+  {
+    "name": "Mission tag8b57cf16",
+    "id": "mis_d60fa036",
+    "org_id": "org_beta",
+    "created_at": "2026-09-07T07:25:24.492411+00:00",
+    "updated_at": "2026-09-07T07:25:24.492411+00:00",
+    "status": "PLANNING",
+    "linked_need_id": null,
+    "assigned_team_id": null,
+    "assigned_resources": [],
+    "notes": ""
+  }
+]

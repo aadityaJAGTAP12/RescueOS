@@ -1,0 +1,33 @@
+[
+  {
+    "quantity": 7,
+    "resource_type": "widget_tag5dde0e46",
+    "unit": "units",
+    "id": "res_b12d92e5",
+    "org_id": "org_alpha",
+    "created_at": "2026-09-07T07:25:24.463750+00:00",
+    "updated_at": "2026-09-07T07:25:24.463750+00:00",
+    "status": "available"
+  },
+  {
+    "quantity": 7,
+    "resource_type": "widget_tagc5cf211e",
+    "unit": "units",
+    "id": "res_d15702b2",
+    "org_id": "org_alpha",
+    "created_at": "2026-09-07T07:25:24.492411+00:00",
+    "updated_at": "2026-09-07T07:25:24.492411+00:00",
+    "status": "available"
+  },
+  {
+    "org_id": "org_alpha",
+    "organization_id": "org_evil",
+    "quantity": 1,
+    "resource_type": "boat",
+    "unit": "units",
+    "id": "res_99b66ff3",
+    "created_at": "2026-09-07T07:25:24.533663+00:00",
+    "updated_at": "2026-09-07T07:25:24.533663+00:00",
+    "status": "available"
+  }
+]

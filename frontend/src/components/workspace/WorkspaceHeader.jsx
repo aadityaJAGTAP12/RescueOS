@@ -2,10 +2,162 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Shield, Bell, Search, ChevronDown, Radio, Brain,
   X, MapPin, AlertTriangle, Zap, Route, Landmark, Clock, Globe,
-  Stethoscope, Package,
+  Stethoscope, Package, CheckCircle, Plus,
 } from "lucide-react";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
+
+// ---------------------------------------------------------------------------
+// OrgSwitcher — org-selection UI for the identity seam.
+// IDENTITY ONLY — NOT AUTHENTICATION: anyone can pick (or create) any org;
+// there is no password. The choice is stored server-side via POST
+// /api/session/org (reliefos_org_id cookie) and every /api/my-org/* endpoint
+// re-derives the org from that session context. See lib/orgContext.js.
+// ---------------------------------------------------------------------------
+function OrgSwitcher() {
+  const { state, switchOrganization, refreshOrgContext } = useWorkspace();
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newOrgName, setNewOrgName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const currentOrg = state.organizations.find((o) => o.id === state.orgId);
+
+  const handleSelect = async (orgId) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await switchOrganization({ orgId });
+      setOpen(false);
+      setCreating(false);
+    } catch (err) {
+      setError(err.message || "Failed to switch organization");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    if (!newOrgName.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await switchOrganization({ create: { name: newOrgName.trim() } });
+      setNewOrgName("");
+      setCreating(false);
+      setOpen(false);
+    } catch (err) {
+      setError(err.message || "Failed to create organization");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => {
+          setOpen(!open);
+          refreshOrgContext();
+        }}
+        className="flex items-center gap-1.5 px-2 py-1 rounded bg-[#1a2332] border border-[#2a3a4e] hover:border-[#4ea8de]/40 transition-colors"
+        title="Select organization context (identity only — not a login)"
+      >
+        <Shield className="w-3 h-3 text-[#4ea8de]" />
+        <span className="text-[10px] font-medium text-[#c8d6e5] max-w-[120px] truncate">
+          {currentOrg?.name || state.orgId || "Select org"}
+        </span>
+        <ChevronDown className="w-3 h-3 text-[#6b7d93]" />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 mt-1 w-64 bg-[#0f1419] border border-[#2a3a4e] rounded-lg shadow-2xl z-[9999] overflow-hidden">
+          <div className="px-3 py-2 border-b border-[#2a3a4e]">
+            <div className="text-[9px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+              Organization Context
+            </div>
+            <div className="text-[9px] text-[#d97706] mt-0.5">
+              Identity only — not authentication. Anyone can select any org.
+            </div>
+          </div>
+          <div className="max-h-60 overflow-y-auto py-1">
+            {state.organizations.length === 0 ? (
+              <div className="px-3 py-2 text-[10px] text-[#6b7d93]">
+                No organizations registered yet.
+              </div>
+            ) : (
+              state.organizations.map((o) => (
+                <button
+                  key={o.id}
+                  onClick={() => handleSelect(o.id)}
+                  disabled={busy}
+                  className={cn(
+                    "w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors disabled:opacity-50",
+                    o.id === state.orgId ? "bg-[#1a2332]" : "hover:bg-[#1a2332]/50"
+                  )}
+                >
+                  <Shield
+                    className="w-3 h-3 shrink-0"
+                    style={{ color: o.id === state.orgId ? "#4ea8de" : "#6b7d93" }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] text-[#c8d6e5] truncate">{o.name}</div>
+                    <div className="text-[9px] text-[#6b7d93] font-mono">{o.id}</div>
+                  </div>
+                  {o.id === state.orgId && (
+                    <CheckCircle className="w-3 h-3 text-[#4ea8de] shrink-0" />
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+          <div className="border-t border-[#2a3a4e] p-2">
+            {creating ? (
+              <form onSubmit={handleCreate} className="space-y-1.5">
+                <input
+                  autoFocus
+                  value={newOrgName}
+                  onChange={(e) => setNewOrgName(e.target.value)}
+                  placeholder="New organization name"
+                  className="w-full px-2 py-1.5 rounded border border-[#2a3a4e] bg-[#1a2332] text-[11px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+                />
+                <div className="flex gap-1.5">
+                  <button
+                    type="submit"
+                    disabled={busy || !newOrgName.trim()}
+                    className="flex-1 px-2 py-1 rounded text-[10px] font-medium bg-teal-500/15 text-teal-400 border border-teal-500/30 hover:bg-teal-500/25 disabled:opacity-50"
+                  >
+                    {busy ? "Creating…" : "Create & switch"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreating(false)}
+                    className="px-2 py-1 rounded text-[10px] text-[#6b7d93] border border-[#2a3a4e] hover:bg-[#1a2332]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <button
+                onClick={() => setCreating(true)}
+                disabled={busy}
+                className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-[10px] font-medium text-[#4ea8de] border border-[#2a3a4e] hover:bg-[#1a2332] disabled:opacity-50"
+              >
+                <Plus className="w-3 h-3" /> Create organization
+              </button>
+            )}
+            {error && (
+              <div className="mt-1.5 text-[9px] text-red-400">{error}</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const SEARCH_ICONS = {
   district: MapPin,
@@ -124,6 +276,9 @@ export default function WorkspaceHeader({ onOpenAI, mode, onModeChange }) {
         </select>
         <ChevronDown className="w-3 h-3 text-[#6b7d93]" />
       </div>
+
+      {/* Org context switcher (identity seam — not authentication) */}
+      <OrgSwitcher />
 
       {/* Mode toggle */}
       <div className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-[#1a2332] border border-[#2a3a4e]">

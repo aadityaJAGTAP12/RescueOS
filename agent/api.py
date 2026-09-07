@@ -34,6 +34,7 @@ from agent.tools.query_parser_tool import (
 from agent.tools.allocation_tool import rank_locations, allocate_resources, recommend_destination
 from agent.tools.routing_tool import get_route, check_osrm_health
 from agent.overrides import apply_override, get_operational_status, get_active_override, get_all_overrides
+from agent.org_context import resolve_current_org, set_current_org_cookie
 from agent.data_loader import FLOOD_DATA, get_flood_data, get_all_known_locations
 
 
@@ -1180,7 +1181,12 @@ def api_list_offers():
 
 @app.route("/api/offers", methods=["POST"])
 def api_create_offer():
-    """Publish a new resource offer."""
+    """Publish a new resource offer.
+
+    The offering organization is derived server-side via the identity seam
+    (resolve_current_org) — a client-supplied organization_id in the body is
+    NEVER honored for this privileged action.
+    """
     try:
         import uuid
         from agent.data.repository import get_repository
@@ -1191,16 +1197,14 @@ def api_create_offer():
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
 
-        organization_id = payload.get("organization_id") or "org_reliefos_default"
-        if not payload.get("organization_id") and not repo.get_organization(organization_id):
+        organization_id = resolve_current_org(request)
+        if not repo.get_organization(organization_id):
             repo.create_organization(Organization(
                 id=organization_id,
                 name="ReliefOS Coordination Cell",
                 organization_type="coordinator",
                 description="Default local organization for ReliefOS workspace actions.",
             ))
-        if not repo.get_organization(organization_id):
-            return jsonify({"error": f"Organization not found: {organization_id}"}), 400
 
         offer_id = f"offer_{str(uuid.uuid4())[:8]}"
         offer = ResourceOffer(
@@ -1463,54 +1467,109 @@ def api_get_organization(org_id):
 
 
 # ---------------------------------------------------------------------------
-# Organization Workspace endpoints (Phase 7E)
+# Organization session context (identity seam)
+#
+# IDENTITY / CONTEXT ONLY — NOT AUTHENTICATION. There is no password and no
+# credential: anyone may select any organization. See agent/org_context.py
+# for the full trust-boundary documentation. The org id is NEVER taken from
+# the URL path, query string, or request body for org-scoped actions — all
+# org-scoped handlers below derive it via resolve_current_org(request).
 # ---------------------------------------------------------------------------
 
-@app.route("/api/orgs/<org_id>/summary", methods=["GET"])
-def api_org_summary(org_id):
-    """Get organization workspace summary (private + public state)."""
+@app.route("/api/session/org", methods=["GET"])
+def api_get_session_org():
+    """Return the currently resolved org context + registered orgs (for the picker)."""
+    try:
+        from agent.data.repository import get_repository
+        org_id = resolve_current_org(request)
+        repo = get_repository()
+        orgs = repo.list_organizations(active_only=True)
+        return jsonify({
+            "org_id": org_id,
+            "registered": any(o.id == org_id for o in orgs),
+            "organizations": [o.to_dict() for o in orgs],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/session/org", methods=["POST"])
+def api_set_session_org():
+    """
+    Select the organization context for this browser (identity seam).
+
+    Body: {"org_id": "..."} — must be a registered organization (create one
+    first via POST /api/organizations). Sets the plain reliefos_org_id cookie.
+    This is a UI preference, NOT a login — see agent/org_context.py.
+    """
+    try:
+        from agent.data.repository import get_repository
+        payload = request.get_json(force=True, silent=True)
+        if not payload or not payload.get("org_id"):
+            return jsonify({"error": "org_id required"}), 400
+        org_id = str(payload["org_id"]).strip()
+        repo = get_repository()
+        org = repo.get_organization(org_id)
+        if not org:
+            return jsonify({"error": f"Organization not found: {org_id}"}), 404
+        resp = jsonify({"org_id": org_id, "name": org.name})
+        return set_current_org_cookie(resp, org_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Organization Workspace endpoints (Phase 7E — now session-scoped via the
+# identity seam; the org is resolved server-side per request, never taken
+# from the URL. Old /api/orgs/<org_id>/... routes were removed: they trusted
+# a client-supplied org id for privileged private-state access.)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/my-org/summary", methods=["GET"])
+def api_org_summary():
+    """Get organization workspace summary (private + public state) for the session org."""
     try:
         from agent.org_workspace import get_org_summary
-        result = get_org_summary(org_id)
+        result = get_org_summary(resolve_current_org(request))
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/resources", methods=["GET"])
-def api_org_list_resources(org_id):
-    """List private resources for an organization."""
+@app.route("/api/my-org/resources", methods=["GET"])
+def api_org_list_resources():
+    """List private resources for the session organization."""
     try:
         from agent.org_workspace import list_resources
-        resources = list_resources(org_id)
+        resources = list_resources(resolve_current_org(request))
         return jsonify({"resources": resources})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/resources", methods=["POST"])
-def api_org_add_resource(org_id):
-    """Add a private resource to organization inventory."""
+@app.route("/api/my-org/resources", methods=["POST"])
+def api_org_add_resource():
+    """Add a private resource to the session organization's inventory."""
     try:
         from agent.org_workspace import add_resource
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
-        resource = add_resource(org_id, payload)
+        resource = add_resource(resolve_current_org(request), payload)
         return jsonify({"resource": resource}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/resources/<resource_id>", methods=["PATCH"])
-def api_org_update_resource(org_id, resource_id):
-    """Update a private resource."""
+@app.route("/api/my-org/resources/<resource_id>", methods=["PATCH"])
+def api_org_update_resource(resource_id):
+    """Update a private resource of the session organization."""
     try:
         from agent.org_workspace import update_resource
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
-        result = update_resource(org_id, resource_id, payload)
+        result = update_resource(resolve_current_org(request), resource_id, payload)
         if not result:
             return jsonify({"error": "Resource not found"}), 404
         return jsonify({"resource": result})
@@ -1518,12 +1577,12 @@ def api_org_update_resource(org_id, resource_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/resources/<resource_id>", methods=["DELETE"])
-def api_org_delete_resource(org_id, resource_id):
-    """Delete a private resource."""
+@app.route("/api/my-org/resources/<resource_id>", methods=["DELETE"])
+def api_org_delete_resource(resource_id):
+    """Delete a private resource of the session organization."""
     try:
         from agent.org_workspace import delete_resource
-        deleted = delete_resource(org_id, resource_id)
+        deleted = delete_resource(resolve_current_org(request), resource_id)
         if not deleted:
             return jsonify({"error": "Resource not found"}), 404
         return jsonify({"message": "Resource deleted"})
@@ -1531,40 +1590,40 @@ def api_org_delete_resource(org_id, resource_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/teams", methods=["GET"])
-def api_org_list_teams(org_id):
-    """List private teams for an organization."""
+@app.route("/api/my-org/teams", methods=["GET"])
+def api_org_list_teams():
+    """List private teams for the session organization."""
     try:
         from agent.org_workspace import list_teams
-        teams = list_teams(org_id)
+        teams = list_teams(resolve_current_org(request))
         return jsonify({"teams": teams})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/teams", methods=["POST"])
-def api_org_add_team(org_id):
-    """Add a private team."""
+@app.route("/api/my-org/teams", methods=["POST"])
+def api_org_add_team():
+    """Add a private team to the session organization."""
     try:
         from agent.org_workspace import add_team
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
-        team = add_team(org_id, payload)
+        team = add_team(resolve_current_org(request), payload)
         return jsonify({"team": team}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/teams/<team_id>", methods=["PATCH"])
-def api_org_update_team(org_id, team_id):
-    """Update a private team."""
+@app.route("/api/my-org/teams/<team_id>", methods=["PATCH"])
+def api_org_update_team(team_id):
+    """Update a private team of the session organization."""
     try:
         from agent.org_workspace import update_team
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
-        result = update_team(org_id, team_id, payload)
+        result = update_team(resolve_current_org(request), team_id, payload)
         if not result:
             return jsonify({"error": "Team not found"}), 404
         return jsonify({"team": result})
@@ -1572,40 +1631,40 @@ def api_org_update_team(org_id, team_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/missions", methods=["GET"])
-def api_org_list_missions(org_id):
-    """List private missions for an organization."""
+@app.route("/api/my-org/missions", methods=["GET"])
+def api_org_list_missions():
+    """List private missions for the session organization."""
     try:
         from agent.org_workspace import list_missions
-        missions = list_missions(org_id)
+        missions = list_missions(resolve_current_org(request))
         return jsonify({"missions": missions})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/missions", methods=["POST"])
-def api_org_add_mission(org_id):
-    """Add a private mission."""
+@app.route("/api/my-org/missions", methods=["POST"])
+def api_org_add_mission():
+    """Add a private mission to the session organization."""
     try:
         from agent.org_workspace import add_mission
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
-        mission = add_mission(org_id, payload)
+        mission = add_mission(resolve_current_org(request), payload)
         return jsonify({"mission": mission}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/missions/<mission_id>", methods=["PATCH"])
-def api_org_update_mission(org_id, mission_id):
-    """Update a private mission."""
+@app.route("/api/my-org/missions/<mission_id>", methods=["PATCH"])
+def api_org_update_mission(mission_id):
+    """Update a private mission of the session organization."""
     try:
         from agent.org_workspace import update_mission
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
-        result = update_mission(org_id, mission_id, payload)
+        result = update_mission(resolve_current_org(request), mission_id, payload)
         if not result:
             return jsonify({"error": "Mission not found"}), 404
         return jsonify({"mission": result})
@@ -1613,13 +1672,14 @@ def api_org_update_mission(org_id, mission_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/agent/analyze-need", methods=["POST"])
-def api_org_agent_analyze_need(org_id):
+@app.route("/api/my-org/agent/analyze-need", methods=["POST"])
+def api_org_agent_analyze_need():
     """
-    NGO Main Agent analyzes a network Need using private organizational context.
-    
+    NGO Main Agent analyzes a network Need using the session org's private
+    organizational context.
+
     Body: {"need": {...}} — the full need dict from the network.
-    
+
     Returns recommendation, evidence, proposed publication.
     This endpoint performs NO writes — human must approve any publication.
     """
@@ -1627,13 +1687,14 @@ def api_org_agent_analyze_need(org_id):
         from agent.agents.ngo_main_agent import analyze_need_for_org
         from agent.org_workspace import list_resources, list_teams, list_missions
         from agent.data.repository import get_repository
-        
+
         payload = request.get_json(force=True, silent=True)
         if not payload or not payload.get("need"):
             return jsonify({"error": "Body must include 'need'"}), 400
-        
+
         need = payload["need"]
-        
+        org_id = resolve_current_org(request)
+
         # Load private context
         resources = list_resources(org_id)
         teams = list_teams(org_id)
@@ -1666,18 +1727,20 @@ def api_org_agent_analyze_need(org_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/agent/situation", methods=["GET"])
-def api_org_agent_situation(org_id):
+@app.route("/api/my-org/agent/situation", methods=["GET"])
+def api_org_agent_situation():
     """
-    NGO Main Agent situation summary.
-    
+    NGO Main Agent situation summary for the session organization.
+
     Returns private + network summary with attention items.
     """
     try:
         from agent.agents.ngo_main_agent import get_org_situation
         from agent.org_workspace import list_resources, list_teams, list_missions
         from agent.data.repository import get_repository
-        
+
+        org_id = resolve_current_org(request)
+
         # Load private context
         resources = list_resources(org_id)
         teams = list_teams(org_id)
@@ -1711,25 +1774,29 @@ def api_org_agent_situation(org_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/publish-offer", methods=["POST"])
-def api_org_publish_offer(org_id):
+@app.route("/api/my-org/publish-offer", methods=["POST"])
+def api_org_publish_offer():
     """
-    Publish a resource offer from private inventory to the shared network.
-    
+    Publish a resource offer from the session org's private inventory to the
+    shared network.
+
     This is the critical privacy boundary: the user explicitly chooses
     what to publish. Private inventory is NOT automatically exposed.
+    The publishing organization is derived server-side from the session
+    context — a client-supplied org id is never honored here.
     """
     try:
         import uuid
         from agent.data.repository import get_repository
         from agent.data.models import ResourceOffer, ActivityEvent, Organization
         from agent.org_workspace import update_resource
-        
+
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
-        
+
         repo = get_repository()
+        org_id = resolve_current_org(request)
 
         if not repo.get_organization(org_id):
             repo.create_organization(Organization(
@@ -2169,23 +2236,26 @@ def api_send_proposal_to_org(proposal_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/agent/evaluate-coordination", methods=["POST"])
-def api_org_evaluate_coordination(org_id):
+@app.route("/api/my-org/agent/evaluate-coordination", methods=["POST"])
+def api_org_evaluate_coordination():
     """
-    NGO Main Agent privately evaluates a coordination proposal.
-    
+    NGO Main Agent privately evaluates a coordination proposal for the
+    session organization.
+
     Body: {"proposal_id": "..."}
-    
+
     Returns evaluation (private factors are stored but NOT exposed in response).
     """
     try:
         from agent.coordination.proposal import get_proposal, record_org_evaluation
         from agent.coordination.ngo_evaluation import evaluate_coordination
-        
+
         payload = request.get_json(force=True, silent=True)
         if not payload or not payload.get("proposal_id"):
             return jsonify({"error": "proposal_id required"}), 400
-        
+
+        org_id = resolve_current_org(request)
+
         proposal = get_proposal(payload["proposal_id"])
         if not proposal:
             return jsonify({"error": "Proposal not found"}), 404
@@ -2222,24 +2292,26 @@ def api_org_evaluate_coordination(org_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/orgs/<org_id>/agent/approve-publication", methods=["POST"])
-def api_org_approve_publication(org_id):
+@app.route("/api/my-org/agent/approve-publication", methods=["POST"])
+def api_org_approve_publication():
     """
-    Human-approved publication of proposed response.
-    
+    Human-approved publication of proposed response for the session org.
+
     Body: {"proposal_id": "..."}
-    
+
     Creates a public Resource Offer from the approved proposal.
     """
     try:
         from agent.coordination.proposal import get_proposal, approve_publication, link_offer
         from agent.coordination.publication import create_public_offer_from_proposal
         from agent.data.repository import get_repository
-        
+
         payload = request.get_json(force=True, silent=True)
         if not payload or not payload.get("proposal_id"):
             return jsonify({"error": "proposal_id required"}), 400
-        
+
+        org_id = resolve_current_org(request)
+
         proposal = get_proposal(payload["proposal_id"])
         if not proposal:
             return jsonify({"error": "Proposal not found"}), 404

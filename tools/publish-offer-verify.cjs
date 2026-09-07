@@ -54,11 +54,17 @@ async function run() {
       reporter_id: "publish-offer-verify",
     }),
   });
-  const resource = await api("/api/orgs/org_demo/resources", {
+  // Select the org via the identity seam — private endpoints (/api/my-org/*)
+  // derive the org from the session context, never from the URL.
+  await api("/api/session/org", {
+    method: "POST",
+    body: JSON.stringify({ org_id: "org_demo" }),
+  });
+  const resource = await api("/api/my-org/resources", {
     method: "POST",
     body: JSON.stringify({ resource_type: "boat", quantity: 2, unit: "units", location: "Jorhat" }),
   });
-  const team = await api("/api/orgs/org_demo/teams", {
+  const team = await api("/api/my-org/teams", {
     method: "POST",
     body: JSON.stringify({ name: "Rescue Team A" }),
   });

@@ -1405,23 +1405,23 @@ function CreateOfferForm({ onClose }) {
     lat: "",
     lon: "",
     notes: "",
-    organization_id: "org_reliefos_default",
+    // Display-only hint: the server derives the publishing org from the
+    // session context (identity seam) and never trusts this value.
+    organization_id: state.orgId || "",
   });
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false); // sync double-submit guard (rapid re-clicks)
   const [error, setError] = useState(null);
 
+  // Keep the displayed org in sync with the session context.
   useEffect(() => {
-    if (
-      state.organizations.length > 0 &&
-      !state.organizations.some((organization) => organization.id === form.organization_id)
-    ) {
+    if (state.orgId) {
       setForm((current) => ({
         ...current,
-        organization_id: state.organizations[0].id,
+        organization_id: state.orgId,
       }));
     }
-  }, [state.organizations, form.organization_id]);
+  }, [state.orgId]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1430,7 +1430,9 @@ function CreateOfferForm({ onClose }) {
     setSubmitting(true);
     setError(null);
     try {
-      const resp = await fetch(`/api/orgs/${form.organization_id}/publish-offer`, {
+      // The server resolves the publishing org from the session context;
+      // form.organization_id is display-only and ignored server-side.
+      const resp = await fetch(`/api/my-org/publish-offer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

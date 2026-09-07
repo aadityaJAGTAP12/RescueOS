@@ -50,20 +50,33 @@ Offers Activity    Teams
 
 ### Backend: API Endpoints
 
+> **Phase 7I update (2026-09-07):** all `/api/orgs/<org_id>/...` routes were
+> replaced by session-scoped `/api/my-org/...` routes that derive the org via
+> the identity seam (`agent/org_context.py` → `resolve_current_org`). The old
+> routes trusted a client-supplied org id in the URL for privileged
+> private-state access and were removed. See `docs/RELIEFOS_CURRENT_STATE.md`
+> § "Organization Identity Seam". Identity only — NOT authentication.
+
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/orgs/<org_id>/summary` | GET | Full org summary |
-| `/api/orgs/<org_id>/resources` | GET | List private resources |
-| `/api/orgs/<org_id>/resources` | POST | Add private resource |
-| `/api/orgs/<org_id>/resources/<id>` | PATCH | Update resource |
-| `/api/orgs/<org_id>/resources/<id>` | DELETE | Delete resource |
-| `/api/orgs/<org_id>/teams` | GET | List private teams |
-| `/api/orgs/<org_id>/teams` | POST | Add private team |
-| `/api/orgs/<org_id>/teams/<id>` | PATCH | Update team |
-| `/api/orgs/<org_id>/missions` | GET | List private missions |
-| `/api/orgs/<org_id>/missions` | POST | Add private mission |
-| `/api/orgs/<org_id>/missions/<id>` | PATCH | Update mission |
-| `/api/orgs/<org_id>/publish-offer` | POST | Publish offer to network |
+| `/api/session/org` | GET | Current org context + registered orgs |
+| `/api/session/org` | POST | Select org context (sets `reliefos_org_id` cookie) |
+| `/api/my-org/summary` | GET | Full org summary (session org) |
+| `/api/my-org/resources` | GET | List private resources |
+| `/api/my-org/resources` | POST | Add private resource |
+| `/api/my-org/resources/<id>` | PATCH | Update resource |
+| `/api/my-org/resources/<id>` | DELETE | Delete resource |
+| `/api/my-org/teams` | GET | List private teams |
+| `/api/my-org/teams` | POST | Add private team |
+| `/api/my-org/teams/<id>` | PATCH | Update team |
+| `/api/my-org/missions` | GET | List private missions |
+| `/api/my-org/missions` | POST | Add private mission |
+| `/api/my-org/missions/<id>` | PATCH | Update mission |
+| `/api/my-org/agent/situation` | GET | NGO agent situation (session org) |
+| `/api/my-org/agent/analyze-need` | POST | NGO agent analysis (session org) |
+| `/api/my-org/publish-offer` | POST | Publish offer to network |
+| `/api/my-org/agent/evaluate-coordination` | POST | Evaluate coordination proposal |
+| `/api/my-org/agent/approve-publication` | POST | Approve publication of proposal |
 
 ### Frontend: Mode Toggle
 

@@ -511,5 +511,26 @@
     "facility_status_mentions": [],
     "extraction_confidence": "high",
     "raw_text": "Road blocked near Jorhat due to flooding"
+  },
+  {
+    "id": "56621465",
+    "timestamp": "2026-09-07T07:27:56.270317+00:00",
+    "lat": null,
+    "lon": null,
+    "people_count": 0,
+    "adults": 0,
+    "children": 0,
+    "elderly": 0,
+    "needs": [],
+    "note": "Road blocked near Jorhat due to flooding",
+    "contact": null,
+    "source": "field_intelligence_text",
+    "verified": false,
+    "location_description": "near Jorhat",
+    "location_resolved": false,
+    "road_status_mentions": [],
+    "facility_status_mentions": [],
+    "extraction_confidence": "high",
+    "raw_text": "Road blocked near Jorhat due to flooding"
   }
 ]

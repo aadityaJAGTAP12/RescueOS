@@ -5,6 +5,80 @@
 
 ---
 
+## 0. ORGANIZATION IDENTITY SEAM (Phase 7I addition, 2026-09-07)
+
+### What was built
+
+A clean **organization-identity seam**: one authoritative function that every
+piece of NGO / private-workspace logic uses to determine "which organization
+is this".
+
+- **Seam function:** `agent/org_context.py` → `resolve_current_org(request) -> str`
+- **Mechanism:** a plain `reliefos_org_id` cookie set by `POST /api/session/org`
+  (validated against registered organizations at switch time). Cookieless
+  callers (tools, curl, tests) fall back to `DEFAULT_ORG_ID = "org_demo"`.
+- **Selection UI:** org picker in the workspace header
+  (`frontend/src/components/workspace/WorkspaceHeader.jsx` → `OrgSwitcher`),
+  backed by `frontend/src/lib/orgContext.js` + session state in
+  `frontend/src/lib/workspaceContext.jsx` (`state.orgId`).
+- **All org-scoped endpoints moved** from `/api/orgs/<org_id>/...` (which
+  trusted a client-supplied org id in the URL) to `/api/my-org/...`, deriving
+  the org server-side per request via the seam.
+
+### ⚠️ THIS IS IDENTITY / CONTEXT ONLY — NOT AUTHENTICATION
+
+- There is **no password, login, session token, or credential** of any kind.
+- **Anyone can select any organization** — via the picker or by simply setting
+  the `reliefos_org_id` cookie. The cookie is unsigned and trivially forged.
+- This is **NOT safe for a multi-tenant or public deployment as-is**.
+- Real authentication/authorization is **deliberately deferred** to a specific
+  future deployment's needs. The value built here is the *seam*: every
+  org-scoped code path already flows through ONE function, so a future auth
+  layer only has to change `resolve_current_org` — no endpoint changes needed.
+
+### Hardcoded / client-trusted org_id locations found and fixed
+
+Full audit list (grep across `agent/` and `frontend/src/`):
+
+| # | Location | Was | Now |
+|---|----------|-----|-----|
+| 1 | `frontend/src/components/workspace/OrganizationWorkspace.jsx:14` | `CURRENT_ORG_ID = "org_demo"` hardcoded | Removed; org comes from session state (`state.orgId`), fetches hit `/api/my-org/*` |
+| 2 | `tools/ui-diagnostics.cjs` | hardcoded `org_demo` seed, no session | Seeds org then selects it via `POST /api/session/org` |
+| 3 | `agent/api.py` — all 16 `/api/orgs/<org_id>/...` endpoints (summary, resources GET/POST/PATCH/DELETE, teams GET/POST/PATCH, missions GET/POST/PATCH, analyze-need, situation, publish-offer, evaluate-coordination, approve-publication) | org id taken from the URL path (client-trusted) | Replaced with `/api/my-org/*` + `resolve_current_org(request)` |
+| 4 | `agent/api.py` `POST /api/offers` | `payload.get("organization_id") or "org_reliefos_default"` (client-trusted) | `resolve_current_org(request)`; client body org id ignored |
+| 5 | `frontend/src/components/workspace/ContextPanel.jsx` `CreateOfferForm` | posted to `/api/orgs/${form.organization_id}/publish-offer` with a form-chosen org | Posts to `/api/my-org/publish-offer`; form org field is display-only |
+| 6 | `tools/publish-offer-verify.cjs`, `tools/double-click-test.cjs`, `tools/cdp-trace.cjs` | seeded private state via `/api/orgs/org_demo/...` | Select org via `POST /api/session/org`, then use `/api/my-org/*` |
+| 7 | `tools/timed_api_diag.py` | hardcoded `"org_demo"` private-context reads | Diagnostic-only tool; still targets the default org explicitly for timing tests (not a trust-boundary surface — left as-is, documented here) |
+
+Locations deliberately **not** changed (they are not trust-boundary surfaces):
+
+- `GET /api/offers?organization_id=...` and `GET
+  /api/network/coordination/proposals?organization_id=...` — read-only public
+  network filters, not privileged actions.
+- `POST /api/operations` `lead_organization_id` — a coordinator-facing shared
+  object field (who leads the op), not a private-context selector; the org
+  context for private state still comes from the seam.
+- `POST /api/network/coordination/propose` `organization_id` — network-agent
+  proposal targeting (which org a proposal is FOR), public by design.
+- Match-confirm flow — already derived the org server-side from the offer
+  (`offer.organization_id`); no change needed.
+- `data/orgs/org_demo/*.json` — private-state data files, not code.
+
+### Verification evidence
+
+- `tests/test_org_context.py` (17 tests): cookie resolution + fallback,
+  session endpoints, private-endpoint isolation across two real orgs,
+  NGO agent analysis resolving to the selected org, publish-offer trust
+  boundary (client-supplied `organization_id: "org_evil"` ignored — server
+  context wins), old `/api/orgs/...` routes 404, cookieless fallback.
+- `frontend/src/__tests__/orgContext.test.jsx` (8 tests): session-derived
+  resolution, POST /api/session/org selection, create-and-switch, cookie
+  mirror, failure fallback.
+- Live server verification (org switch + trust boundary with real requests):
+  see `docs/PHASE7I_FUNCTIONAL_AUDIT.md` § org-context.
+
+---
+
 ## 1. CURRENT CODE STATE
 
 ### Audit Verification Results
