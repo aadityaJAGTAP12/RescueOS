@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Shield, Package, Users, Map, Zap, AlertTriangle, Plus,
   ChevronRight, ExternalLink, Edit3, Trash2, CheckCircle,
-  Clock, MapPin, Brain, Bell, Search,
+  Clock, MapPin, Brain, Bell, Search, Handshake, Info,
 } from "lucide-react";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
@@ -724,6 +724,329 @@ function NetworkRequests({ orgId, onOpenNeed }) {
 }
 
 // ---------------------------------------------------------------------------
+// Incoming Proposals Panel (Network ↔ NGO Coordination)
+// ---------------------------------------------------------------------------
+
+function IncomingProposals({ orgId, onOpenNeed }) {
+  const { state, refreshAll, openPanel, fetchActivity } = useWorkspace();
+  const [proposals, setProposals] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [evaluatingId, setEvaluatingId] = useState(null);
+  const [approvingId, setApprovingId] = useState(null);
+  const [decliningId, setDecliningId] = useState(null);
+  const approvingRef = useRef(false);
+  const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
+
+  const fetchOrgProposals = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await fetch(`/api/network/coordination/proposals?organization_id=${encodeURIComponent(orgId)}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setProposals(data.proposals || []);
+      } else {
+        setError(`Failed to fetch proposals (${resp.status})`);
+      }
+    } catch (err) {
+      console.error("Failed to fetch org proposals:", err);
+      setError("Network error: could not reach server");
+    } finally {
+      setLoading(false);
+    }
+  }, [orgId]);
+
+  useEffect(() => {
+    fetchOrgProposals();
+  }, [fetchOrgProposals, orgId]);
+
+  const handleEvaluate = async (proposalId) => {
+    setEvaluatingId(proposalId);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const resp = await fetch("/api/my-org/agent/evaluate-coordination", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposal_id: proposalId }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setProposals((prev) =>
+          prev.map((p) =>
+            p.id === proposalId
+              ? {
+                  ...p,
+                  status: "ORG_RECOMMENDED",
+                  local_evaluation: data.evaluation,
+                }
+              : p
+          )
+        );
+        fetchActivity();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to evaluate proposal (${resp.status})`);
+      }
+    } catch (err) {
+      console.error("Evaluation failed:", err);
+      setError("Network error: could not reach server");
+    } finally {
+      setEvaluatingId(null);
+    }
+  };
+
+  const handleApprovePublication = async (proposalId) => {
+    if (approvingRef.current) return;
+    approvingRef.current = true;
+    setApprovingId(proposalId);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const resp = await fetch("/api/my-org/agent/approve-publication", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposal_id: proposalId }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setSuccessMessage(data.message || "Offer published to network");
+        await fetchOrgProposals();
+        await refreshAll();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to approve publication (${resp.status})`);
+      }
+    } catch (err) {
+      console.error("Approve publication failed:", err);
+      setError("Network error: could not reach server");
+    } finally {
+      approvingRef.current = false;
+      setApprovingId(null);
+    }
+  };
+
+  const handleDecline = async (proposalId) => {
+    setDecliningId(proposalId);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const resp = await fetch(`/api/network/coordination/proposals/${proposalId}/decline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (resp.ok) {
+        await fetchOrgProposals();
+        fetchActivity();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to decline proposal (${resp.status})`);
+      }
+    } catch (err) {
+      console.error("Decline proposal failed:", err);
+      setError("Network error: could not reach server");
+    } finally {
+      setDecliningId(null);
+    }
+  };
+
+  const STATUS_COLORS = {
+    PROPOSED: "#4ea8de",
+    PENDING_ORG_REVIEW: "#d97706",
+    ORG_RECOMMENDED: "#a855f7",
+    PUBLISHED: "#16a34a",
+    CONFIRMED: "#16a34a",
+    DECLINED: "#dc2626",
+    EXPIRED: "#6b7d93",
+  };
+
+  const DECISION_COLORS = {
+    SUITABLE: "#16a34a",
+    POTENTIALLY_SUITABLE: "#d97706",
+    CONFLICT: "#d97706",
+    UNAVAILABLE: "#dc2626",
+    INSUFFICIENT_INFO: "#78716c",
+  };
+
+  if (loading) {
+    return <div className="text-[11px] text-[#6b7d93] p-2">Loading incoming proposals...</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between px-1">
+        <div className="text-[9px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+          INCOMING PROPOSALS ({proposals.length})
+        </div>
+        <button
+          onClick={fetchOrgProposals}
+          className="text-[9px] text-[#4ea8de] hover:underline"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <div className="px-2.5 py-2 rounded bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">
+          {error}
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="px-2.5 py-2 rounded bg-green-500/10 border border-green-500/20 text-[11px] text-green-400">
+          {successMessage}
+        </div>
+      )}
+
+      {proposals.length === 0 ? (
+        <div className="p-4 rounded bg-[#1a2332] border border-[#2a3a4e] text-center space-y-1">
+          <Handshake className="w-5 h-5 text-[#4a5568] mx-auto mb-1" />
+          <div className="text-[11px] text-[#c8d6e5] font-medium">No incoming proposals</div>
+          <div className="text-[10px] text-[#6b7d93]">
+            Coordination proposals targeted at {orgId} will appear here.
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {proposals.map((p) => {
+            const statusColor = STATUS_COLORS[p.status] || "#6b7d93";
+            const evaluation = p.local_evaluation;
+            const isEvaluating = evaluatingId === p.id;
+            const isApproving = approvingId === p.id;
+            const isDeclining = decliningId === p.id;
+
+            return (
+              <div
+                key={p.id}
+                className="p-3 rounded bg-[#1a2332] border border-[#2a3a4e] space-y-2"
+              >
+                {/* Header */}
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-semibold text-[#c8d6e5]">
+                      {p.proposal_type || "Coordination Request"}
+                    </div>
+                    <div className="text-[9px] text-[#6b7d93] font-mono mt-0.5">
+                      {p.id} · Need: {p.need_id}
+                    </div>
+                  </div>
+                  <span
+                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider border"
+                    style={{
+                      color: statusColor,
+                      backgroundColor: `${statusColor}15`,
+                      borderColor: `${statusColor}30`,
+                    }}
+                  >
+                    {p.status}
+                  </span>
+                </div>
+
+                {/* Summary */}
+                <div className="text-[11px] text-[#a0aec0] leading-relaxed">
+                  {p.summary}
+                </div>
+
+                {/* Need reference link */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      const need = state.needs.find((n) => n.id === p.need_id);
+                      if (need && onOpenNeed) {
+                        onOpenNeed(need);
+                      } else {
+                        openPanel("proposal", p.id, p);
+                      }
+                    }}
+                    className="text-[10px] text-[#4ea8de] hover:underline flex items-center gap-1"
+                  >
+                    View Context / Need Details →
+                  </button>
+                </div>
+
+                {/* Local evaluation results if freshly evaluated or present */}
+                {evaluation && (
+                  <div className="p-2.5 rounded bg-[#0f1419] border border-[#2a3a4e] space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+                        NGO EVALUATION
+                      </span>
+                      <span
+                        className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded"
+                        style={{
+                          color: DECISION_COLORS[evaluation.decision] || "#6b7d93",
+                          backgroundColor: `${DECISION_COLORS[evaluation.decision] || "#6b7d93"}20`,
+                        }}
+                      >
+                        {evaluation.decision}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-[#c8d6e5]">
+                      {evaluation.public_summary}
+                    </div>
+                    {evaluation.resource_assessment?.matching_available != null && (
+                      <div className="text-[10px] text-teal-400">
+                        Available Matching: {evaluation.resource_assessment.matching_available} units
+                      </div>
+                    )}
+                    {evaluation.constraints && evaluation.constraints.length > 0 && (
+                      <div className="text-[9px] text-amber-400/80">
+                        Constraints: {evaluation.constraints.join("; ")}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Published offer notification */}
+                {p.published_offer_id && (
+                  <div className="text-[10px] text-green-400 font-medium">
+                    ✓ Public Offer Created: {p.published_offer_id}
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div className="pt-1 flex flex-wrap gap-1.5">
+                  {(p.status === "PENDING_ORG_REVIEW" || p.status === "PROPOSED") && (
+                    <button
+                      onClick={() => handleEvaluate(p.id)}
+                      disabled={isEvaluating}
+                      className="px-2.5 py-1 rounded text-[10px] font-semibold bg-purple-500/15 text-purple-400 border border-purple-500/30 hover:bg-purple-500/25 transition-colors disabled:opacity-50"
+                    >
+                      {isEvaluating ? "Evaluating…" : "Evaluate with NGO Context"}
+                    </button>
+                  )}
+
+                  {p.status === "ORG_RECOMMENDED" && (
+                    <button
+                      onClick={() => handleApprovePublication(p.id)}
+                      disabled={isApproving}
+                      className="px-2.5 py-1 rounded text-[10px] font-semibold bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-green-500/25 transition-colors disabled:opacity-50"
+                    >
+                      {isApproving ? "Publishing…" : "Approve & Publish Offer"}
+                    </button>
+                  )}
+
+                  {p.status !== "DECLINED" && p.status !== "CONFIRMED" && p.status !== "PUBLISHED" && (
+                    <button
+                      onClick={() => handleDecline(p.id)}
+                      disabled={isDeclining}
+                      className="px-2 py-1 rounded text-[10px] text-red-400/80 border border-red-500/20 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                    >
+                      {isDeclining ? "Declining…" : "Decline"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main OrganizationWorkspace
 // ---------------------------------------------------------------------------
 
@@ -756,6 +1079,7 @@ export default function OrganizationWorkspace({ onOpenNeed }) {
 
   const tabs = [
     { id: "overview", label: "Overview", icon: Shield },
+    { id: "proposals", label: "Proposals", icon: Handshake },
     { id: "ai", label: "AI", icon: Brain },
     { id: "resources", label: "Resources", icon: Package },
     { id: "teams", label: "Teams", icon: Users },
@@ -803,6 +1127,7 @@ export default function OrganizationWorkspace({ onOpenNeed }) {
         ) : (
           <>
             {activeTab === "overview" && <OrgSummary summary={summary} onRefresh={fetchSummary} />}
+            {activeTab === "proposals" && <IncomingProposals orgId={currentOrgId} onOpenNeed={onOpenNeed} />}
             {activeTab === "ai" && <NGOAgentPanel orgId={currentOrgId} summary={summary} />}
             {activeTab === "resources" && <PrivateResources orgId={currentOrgId} onRefresh={fetchSummary} />}
             {activeTab === "teams" && <PrivateTeams orgId={currentOrgId} />}

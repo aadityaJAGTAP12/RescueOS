@@ -1,0 +1,6 @@
+{
+  "mode": "memory",
+  "counts_by_backend": {
+    "InMemoryRepository": 69
+  }
+}

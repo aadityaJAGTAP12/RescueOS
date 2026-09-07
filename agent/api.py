@@ -810,7 +810,6 @@ def api_district_flood_geojson(district_id):
     """Return flood GeoJSON for a specific district (precision-reduced, gzip-negotiated, cached)."""
     flood_data = _flood_geojson_payload(district_id)
     return _flood_geojson_response(flood_data, scope=f"d:{district_id}")
-    return jsonify(flood_data)
 
 
 @app.route("/api/districts/<district_id>/settlements", methods=["GET"])
@@ -1072,6 +1071,7 @@ def api_create_need():
         result = repo.create_need(need)
 
         # Record activity
+        from agent.data.models import ActivityEvent, Notification
         repo.append_activity_event(ActivityEvent(
             id=f"evt_{str(uuid.uuid4())[:8]}",
             entity_type="need",
@@ -1080,6 +1080,19 @@ def api_create_need():
             actor=payload.get("reporter_id", "anonymous"),
             detail=f"Need created: {need.title}",
         ))
+
+        # Emit notification for critical needs
+        if need.urgency == "critical":
+            repo.create_notification(Notification(
+                id=f"notif_{str(uuid.uuid4())[:8]}",
+                recipient_id="network",
+                notification_type="urgent_need",
+                title="Critical Need Reported",
+                message=f"Critical need '{need.title}' reported in {need.district_id or 'network'}.",
+                entity_type="need",
+                entity_id=need_id,
+                metadata={"district_id": need.district_id, "urgency": "critical"},
+            ))
 
         return jsonify({"need": result.to_dict()}), 201
     except Exception as e:
@@ -1152,6 +1165,13 @@ def api_update_need(need_id):
         return jsonify({"need": need.to_dict()})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Coordination proposal endpoints
+# ---------------------------------------------------------------------------
+
+@app.route("/api/proposals", methods=["GET"])
 
 
 # ---------------------------------------------------------------------------
@@ -1872,11 +1892,13 @@ def api_list_activity():
 
 @app.route("/api/notifications", methods=["GET"])
 def api_list_notifications():
-    """List notifications for a user."""
+    """List notifications for an organization or network."""
     try:
         from agent.data.repository import get_repository
         repo = get_repository()
-        recipient_id = request.args.get("recipient_id", "default_user")
+        recipient_id = request.args.get("recipient_id")
+        if not recipient_id:
+            recipient_id = resolve_current_org(request)
         unread_only = request.args.get("unread_only", "false").lower() == "true"
         limit = int(request.args.get("limit", 50))
         notifs = repo.list_notifications(
@@ -2181,7 +2203,7 @@ def api_coordination_propose():
         )
         
         # Record activity
-        from agent.data.models import ActivityEvent
+        from agent.data.models import ActivityEvent, Notification
         repo.append_activity_event(ActivityEvent(
             id=f"evt_{str(uuid.uuid4())[:8]}",
             entity_type="coordination",
@@ -2189,6 +2211,18 @@ def api_coordination_propose():
             event_type="coordination_proposed",
             actor="network_agent",
             detail=f"Coordination proposal created for Need {need.get('id', '')} → {org_name}",
+        ))
+        
+        # Emit notification for target NGO
+        repo.create_notification(Notification(
+            id=f"notif_{str(uuid.uuid4())[:8]}",
+            recipient_id=org_id,
+            notification_type="coordination_proposed",
+            title="New Coordination Proposal",
+            message=f"Coordination proposal {proposal['id']} created for Need {need.get('id', '')}.",
+            entity_type="coordination",
+            entity_id=proposal["id"],
+            metadata={"need_id": need.get("id", ""), "organization_id": org_id},
         ))
         
         # Return the sanitized public projection — never the raw proposal dict
@@ -2235,10 +2269,38 @@ def api_send_proposal_to_org(proposal_id):
     targeted NGO — those must never appear in a network response.
     """
     try:
+        import uuid
         from agent.coordination.proposal import send_to_org, get_public_view
+        from agent.data.repository import get_repository
+        from agent.data.models import ActivityEvent, Notification
+
         proposal = send_to_org(proposal_id)
         if not proposal:
             return jsonify({"error": "Proposal not found"}), 404
+
+        repo = get_repository()
+        # Activity Event
+        repo.append_activity_event(ActivityEvent(
+            id=f"evt_{str(uuid.uuid4())[:8]}",
+            entity_type="coordination",
+            entity_id=proposal["id"],
+            event_type="proposal_sent_to_org",
+            actor="network_coordinator",
+            detail=f"Proposal {proposal['id']} sent to {proposal.get('organization_name', proposal.get('organization_id'))} for review",
+        ))
+
+        # Targeted Notification to target NGO
+        repo.create_notification(Notification(
+            id=f"notif_{str(uuid.uuid4())[:8]}",
+            recipient_id=proposal["organization_id"],
+            notification_type="coordination_proposal_received",
+            title="Proposal Review Requested",
+            message=f"Coordination proposal {proposal['id']} for Need {proposal.get('need_id', '')} requires evaluation.",
+            entity_type="coordination",
+            entity_id=proposal["id"],
+            metadata={"need_id": proposal.get("need_id"), "proposal_id": proposal["id"]},
+        ))
+
         return jsonify({"proposal": get_public_view(proposal)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -2291,9 +2353,9 @@ def api_org_evaluate_coordination():
         from agent.coordination.publication import extract_public_fields
         public_eval = extract_public_fields(evaluation)
         
-        # Record activity
+        # Record activity & notification
         from agent.data.repository import get_repository
-        from agent.data.models import ActivityEvent
+        from agent.data.models import ActivityEvent, Notification
         repo = get_repository()
         repo.append_activity_event(ActivityEvent(
             id=f"evt_{str(uuid.uuid4())[:8]}",
@@ -2302,6 +2364,18 @@ def api_org_evaluate_coordination():
             event_type="organization_evaluation_completed",
             actor=org_id,
             detail=f"Organization {org_id} evaluated proposal: {evaluation.get('decision', '')}",
+        ))
+        
+        # Notification for org coordinators that recommendation is ready for human approval
+        repo.create_notification(Notification(
+            id=f"notif_{str(uuid.uuid4())[:8]}",
+            recipient_id=org_id,
+            notification_type="coordination_recommendation_ready",
+            title="Coordination Recommendation Ready",
+            message=f"Proposal {proposal['id']} evaluated ({public_eval.get('decision', 'REVIEW')}). Awaiting human approval to publish.",
+            entity_type="coordination",
+            entity_id=proposal["id"],
+            metadata={"proposal_id": proposal["id"], "decision": public_eval.get("decision")},
         ))
         
         return jsonify({"evaluation": public_eval, "proposal_id": proposal["id"]})
@@ -2319,9 +2393,11 @@ def api_org_approve_publication():
     Creates a public Resource Offer from the approved proposal.
     """
     try:
+        import uuid
         from agent.coordination.proposal import get_proposal, approve_publication, link_offer
         from agent.coordination.publication import create_public_offer_from_proposal
         from agent.data.repository import get_repository
+        from agent.data.models import ActivityEvent, Notification
 
         payload = request.get_json(force=True, silent=True)
         if not payload or not payload.get("proposal_id"):
@@ -2357,7 +2433,30 @@ def api_org_approve_publication():
         )
         
         if result.get("offer"):
-            link_offer(proposal["id"], result["offer"]["id"])
+            offer_id = result["offer"]["id"]
+            link_offer(proposal["id"], offer_id)
+            
+            # Proposal confirmed activity event
+            repo.append_activity_event(ActivityEvent(
+                id=f"evt_{str(uuid.uuid4())[:8]}",
+                entity_type="coordination",
+                entity_id=proposal["id"],
+                event_type="proposal_confirmed",
+                actor=org_id,
+                detail=f"Proposal {proposal['id']} confirmed; offer {offer_id} published to network",
+            ))
+            
+            # Broadcast Notification to Network
+            repo.create_notification(Notification(
+                id=f"notif_{str(uuid.uuid4())[:8]}",
+                recipient_id="network",
+                notification_type="coordination_offer_published",
+                title="Resource Offer Published",
+                message=f"Organization {org_id} approved and published offer {offer_id} for Need {proposal.get('need_id', '')}.",
+                entity_type="coordination",
+                entity_id=proposal["id"],
+                metadata={"proposal_id": proposal["id"], "offer_id": offer_id},
+            ))
         
         return jsonify(result)
     except Exception as e:
@@ -2371,10 +2470,36 @@ def api_decline_proposal(proposal_id):
     Privacy boundary: returns the sanitized PUBLIC projection only.
     """
     try:
+        import uuid
         from agent.coordination.proposal import decline_proposal, get_public_view
+        from agent.data.repository import get_repository
+        from agent.data.models import ActivityEvent, Notification
+
         proposal = decline_proposal(proposal_id)
         if not proposal:
             return jsonify({"error": "Proposal not found"}), 404
+
+        repo = get_repository()
+        repo.append_activity_event(ActivityEvent(
+            id=f"evt_{str(uuid.uuid4())[:8]}",
+            entity_type="coordination",
+            entity_id=proposal["id"],
+            event_type="proposal_declined",
+            actor="coordinator",
+            detail=f"Proposal {proposal['id']} was declined",
+        ))
+
+        repo.create_notification(Notification(
+            id=f"notif_{str(uuid.uuid4())[:8]}",
+            recipient_id="network",
+            notification_type="coordination_proposal_declined",
+            title="Proposal Declined",
+            message=f"Coordination proposal {proposal['id']} was declined.",
+            entity_type="coordination",
+            entity_id=proposal["id"],
+            metadata={"proposal_id": proposal["id"]},
+        ))
+
         return jsonify({"proposal": get_public_view(proposal)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

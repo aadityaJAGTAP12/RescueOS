@@ -164,6 +164,100 @@ function NeedDetail({ data, onClose, onOpenMatch }) {
   const [loadingMatches, setLoadingMatches] = useState(false);
   const [needEvidence, setNeedEvidence] = useState(null);
   const [error, setError] = useState(null);
+  const [proposals, setProposals] = useState([]);
+  const [loadingProposals, setLoadingProposals] = useState(false);
+  const [showPropose, setShowPropose] = useState(false);
+  const [selectedOrgId, setSelectedOrgId] = useState("");
+  const [proposing, setProposing] = useState(false);
+  const [proposalBusy, setProposalBusy] = useState(null);
+
+  const loadNeedProposals = useCallback(async () => {
+    setLoadingProposals(true);
+    try {
+      const resp = await fetch(`/api/network/coordination/proposals?need_id=${encodeURIComponent(need.id)}`);
+      if (resp.ok) {
+        const res = await resp.json();
+        setProposals(res.proposals || []);
+      }
+    } catch (err) {
+      console.error("Failed to load need proposals:", err);
+    } finally {
+      setLoadingProposals(false);
+    }
+  }, [need.id]);
+
+  useEffect(() => {
+    loadNeedProposals();
+  }, [loadNeedProposals]);
+
+  const handleCreateProposal = async (e) => {
+    e.preventDefault();
+    if (!selectedOrgId) return;
+    setProposing(true);
+    setError(null);
+    try {
+      const targetOrg = state.organizations.find(o => o.id === selectedOrgId);
+      const resp = await fetch("/api/network/coordination/propose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          need: need,
+          organization_id: selectedOrgId,
+          organization_name: targetOrg?.name || selectedOrgId,
+        }),
+      });
+      if (resp.ok) {
+        setShowPropose(false);
+        setSelectedOrgId("");
+        await loadNeedProposals();
+        fetchActivity();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to create proposal (${resp.status})`);
+      }
+    } catch (err) {
+      console.error("Failed to propose coordination:", err);
+      setError("Network error: could not reach server");
+    } finally {
+      setProposing(false);
+    }
+  };
+
+  const handleSendProposal = async (proposalId) => {
+    setProposalBusy(proposalId);
+    try {
+      const resp = await fetch(`/api/network/coordination/proposals/${proposalId}/send-to-org`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (resp.ok) {
+        await loadNeedProposals();
+        fetchActivity();
+      }
+    } catch (err) {
+      console.error("Failed to send proposal to org:", err);
+    } finally {
+      setProposalBusy(null);
+    }
+  };
+
+  const handleDeclineProposal = async (proposalId) => {
+    setProposalBusy(proposalId);
+    try {
+      const resp = await fetch(`/api/network/coordination/proposals/${proposalId}/decline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (resp.ok) {
+        await loadNeedProposals();
+        fetchActivity();
+      }
+    } catch (err) {
+      console.error("Failed to decline proposal:", err);
+    } finally {
+      setProposalBusy(null);
+    }
+  };
 
   useEffect(() => {
     fetch(`/api/evidence/need/${need.id}`)
@@ -488,6 +582,123 @@ function NeedDetail({ data, onClose, onOpenMatch }) {
               </button>
             )}
           </div>
+
+          {/* Propose Coordination Action */}
+          {need.status === "OPEN" && (
+            <div className="pt-2">
+              {!showPropose ? (
+                <button
+                  onClick={() => setShowPropose(true)}
+                  className="px-2.5 py-1.5 rounded text-[11px] font-medium bg-teal-500/10 text-teal-400 border border-teal-500/20 hover:bg-teal-500/20 transition-colors flex items-center gap-1"
+                >
+                  <Handshake className="w-3 h-3" />
+                  Propose Coordination
+                </button>
+              ) : (
+                <form onSubmit={handleCreateProposal} className="p-3 rounded bg-[#1a2332] border border-[#2a3a4e] space-y-2">
+                  <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+                    Target Organization
+                  </div>
+                  <select
+                    value={selectedOrgId}
+                    onChange={(e) => setSelectedOrgId(e.target.value)}
+                    className="w-full px-2 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[11px] text-[#c8d6e5] outline-none"
+                    required
+                  >
+                    <option value="">Select an organization...</option>
+                    {state.organizations.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name} ({org.id})
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="submit"
+                      disabled={proposing || !selectedOrgId}
+                      className="flex-1 px-2.5 py-1.5 rounded text-[10px] font-semibold bg-teal-500/15 text-teal-400 border border-teal-500/30 hover:bg-teal-500/25 transition-colors disabled:opacity-50"
+                    >
+                      {proposing ? "Creating…" : "Submit Proposal"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowPropose(false)}
+                      className="px-2.5 py-1.5 rounded text-[10px] text-[#6b7d93] border border-[#2a3a4e] hover:bg-[#0f1419]"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* Linked Coordination Proposals */}
+          {proposals.length > 0 && (
+            <div className="space-y-2 pt-2">
+              <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+                Coordination Proposals ({proposals.length})
+              </div>
+              <div className="space-y-1.5">
+                {proposals.map((p) => {
+                  const statusColors = {
+                    PROPOSED: "#4ea8de",
+                    PENDING_ORG_REVIEW: "#d97706",
+                    ORG_RECOMMENDED: "#a855f7",
+                    PUBLISHED: "#16a34a",
+                    CONFIRMED: "#16a34a",
+                    DECLINED: "#dc2626",
+                    EXPIRED: "#6b7d93",
+                  };
+                  const color = statusColors[p.status] || "#6b7d93";
+                  return (
+                    <div
+                      key={p.id}
+                      className="p-2.5 rounded bg-[#1a2332] border border-[#2a3a4e] space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="text-[11px] font-semibold text-[#c8d6e5] truncate">
+                          {p.organization_name || p.organization_id}
+                        </div>
+                        <StatusBadge status={p.status} color={color} />
+                      </div>
+                      <div className="text-[10px] text-[#a0aec0] line-clamp-2">
+                        {p.summary}
+                      </div>
+                      <div className="flex items-center justify-between pt-1">
+                        <button
+                          onClick={() => onOpenMatch("proposal", p.id, p)}
+                          className="text-[10px] text-[#4ea8de] hover:underline"
+                        >
+                          View Details →
+                        </button>
+                        <div className="flex items-center gap-1">
+                          {p.status === "PROPOSED" && (
+                            <button
+                              onClick={() => handleSendProposal(p.id)}
+                              disabled={proposalBusy === p.id}
+                              className="px-2 py-0.5 rounded text-[9px] font-semibold bg-teal-500/15 text-teal-400 border border-teal-500/30 hover:bg-teal-500/25 transition-colors disabled:opacity-50"
+                            >
+                              {proposalBusy === p.id ? "…" : "Send to Org"}
+                            </button>
+                          )}
+                          {p.status !== "DECLINED" && p.status !== "CONFIRMED" && p.status !== "PUBLISHED" && (
+                            <button
+                              onClick={() => handleDeclineProposal(p.id)}
+                              disabled={proposalBusy === p.id}
+                              className="px-1.5 py-0.5 rounded text-[9px] text-red-400/80 border border-red-500/20 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                            >
+                              Decline
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* RESOURCE MATCHES */}
@@ -2529,6 +2740,262 @@ function IncidentEmptyState({ onClose }) {
 }
 
 // -------------------------------------------------------------------
+// Proposal detail panel
+// -------------------------------------------------------------------
+
+function ProposalDetail({ data, onClose, onOpenNeed }) {
+  const { state, refreshAll, openPanel } = useWorkspace();
+  const [proposal, setProposal] = useState(data);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (data?.id) {
+      fetch(`/api/network/coordination/proposals/${encodeURIComponent(data.id)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((res) => {
+          if (res?.proposal) setProposal(res.proposal);
+        })
+        .catch(() => {});
+    }
+  }, [data?.id]);
+
+  const handleSendToOrg = async () => {
+    setActionBusy(true);
+    setError(null);
+    try {
+      const resp = await fetch(`/api/network/coordination/proposals/${proposal.id}/send-to-org`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (resp.ok) {
+        const res = await resp.json();
+        setProposal(res.proposal);
+        refreshAll();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to send proposal (${resp.status})`);
+      }
+    } catch {
+      setError("Network error: could not reach server");
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleDecline = async () => {
+    setActionBusy(true);
+    setError(null);
+    try {
+      const resp = await fetch(`/api/network/coordination/proposals/${proposal.id}/decline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (resp.ok) {
+        const res = await resp.json();
+        setProposal(res.proposal);
+        refreshAll();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        setError(err.error || `Failed to decline proposal (${resp.status})`);
+      }
+    } catch {
+      setError("Network error: could not reach server");
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const STATUS_COLORS = {
+    PROPOSED: "#4ea8de",
+    PENDING_ORG_REVIEW: "#d97706",
+    ORG_RECOMMENDED: "#a855f7",
+    PUBLISHED: "#16a34a",
+    CONFIRMED: "#16a34a",
+    DECLINED: "#dc2626",
+    EXPIRED: "#6b7d93",
+  };
+
+  const statusColor = STATUS_COLORS[proposal.status] || "#6b7d93";
+
+  return (
+    <>
+      <PanelHeader
+        icon={Handshake}
+        title={proposal.organization_name || proposal.organization_id || "Proposal"}
+        subtitle={`${proposal.id} · ${proposal.proposal_type || "coordination"}`}
+        onClose={onClose}
+        color={statusColor}
+      />
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Status + Need link */}
+        <div className="flex items-center justify-between">
+          <StatusBadge status={proposal.status} color={statusColor} />
+          {proposal.need_id && (
+            <button
+              onClick={() => {
+                const need = state.needs.find((n) => n.id === proposal.need_id);
+                if (need) {
+                  openPanel("need", proposal.need_id, need);
+                } else {
+                  onOpenNeed("need", proposal.need_id, { id: proposal.need_id });
+                }
+              }}
+              className="text-[11px] text-[#4ea8de] hover:underline flex items-center gap-1"
+            >
+              View Need ({proposal.need_id}) →
+            </button>
+          )}
+        </div>
+
+        {error && (
+          <div className="px-2.5 py-2 rounded bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">
+            {error}
+          </div>
+        )}
+
+        {/* Summary */}
+        <div className="p-3 rounded bg-[#1a2332] border border-[#2a3a4e] space-y-1">
+          <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+            Proposal Summary
+          </div>
+          <div className="text-[12px] text-[#c8d6e5] leading-relaxed">
+            {proposal.summary || "No summary provided"}
+          </div>
+          {proposal.recommended_action && (
+            <div className="text-[11px] text-[#a0aec0] pt-1">
+              <span className="text-[#6b7d93]">Recommended: </span>
+              {proposal.recommended_action}
+            </div>
+          )}
+        </div>
+
+        {/* Target Org */}
+        <div className="p-3 rounded bg-[#1a2332] border border-[#2a3a4e] space-y-1">
+          <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+            Target Organization
+          </div>
+          <div className="text-[12px] font-medium text-[#c8d6e5]">
+            {proposal.organization_name || proposal.organization_id}
+          </div>
+          <div className="text-[10px] text-[#6b7d93] font-mono">
+            ID: {proposal.organization_id}
+          </div>
+        </div>
+
+        {/* Evidence & Findings */}
+        {((proposal.public_evidence && proposal.public_evidence.length > 0) ||
+          (proposal.network_findings && proposal.network_findings.length > 0)) && (
+          <div className="space-y-2">
+            <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+              Evidence & Findings
+            </div>
+            <div className="p-2.5 rounded bg-[#1a2332] border border-[#2a3a4e] space-y-1.5">
+              {(proposal.public_evidence || []).map((e, idx) => (
+                <div key={idx} className="flex items-start gap-1.5 text-[11px] text-[#a0aec0]">
+                  <Info className="w-3.5 h-3.5 text-blue-400 mt-0.5 shrink-0" />
+                  <span>{e.detail || e.type || JSON.stringify(e)}</span>
+                </div>
+              ))}
+              {(proposal.network_findings || []).map((f, idx) => (
+                <div key={idx} className="flex items-start gap-1.5 text-[11px] text-[#a0aec0]">
+                  <Info className="w-3.5 h-3.5 text-teal-400 mt-0.5 shrink-0" />
+                  <span>{f.detail || f.type || JSON.stringify(f)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Constraints */}
+        {proposal.constraints && proposal.constraints.length > 0 && (
+          <div className="space-y-1">
+            <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+              Constraints
+            </div>
+            <div className="p-2.5 rounded bg-[#1a2332] border border-[#2a3a4e] space-y-1">
+              {proposal.constraints.map((c, idx) => (
+                <div key={idx} className="text-[11px] text-amber-400/80">• {c}</div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Uncertainty */}
+        {proposal.uncertainty && proposal.uncertainty.length > 0 && (
+          <div className="space-y-1">
+            <div className="text-[10px] font-semibold text-[#6b7d93] uppercase tracking-wider">
+              Uncertainty
+            </div>
+            <div className="p-2.5 rounded bg-[#1a2332] border border-[#2a3a4e] space-y-1">
+              {proposal.uncertainty.map((u, idx) => (
+                <div key={idx} className="text-[11px] text-amber-400/80">⚠ {u}</div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Published Offer Link */}
+        {proposal.published_offer_id && (
+          <div className="p-3 rounded bg-green-500/10 border border-green-500/25 space-y-1.5">
+            <div className="text-[10px] font-semibold text-green-400 uppercase tracking-wider">
+              Published Resource Offer
+            </div>
+            <div className="text-[11px] text-[#c8d6e5]">
+              Offer ID: <span className="font-mono text-green-300">{proposal.published_offer_id}</span>
+            </div>
+            <button
+              onClick={() => {
+                const offer = state.offers.find((o) => o.id === proposal.published_offer_id);
+                openPanel("offer", proposal.published_offer_id, offer || { id: proposal.published_offer_id });
+              }}
+              className="text-[11px] text-green-400 hover:underline flex items-center gap-1 mt-1"
+            >
+              Open Offer Details →
+            </button>
+          </div>
+        )}
+
+        {/* Timestamps */}
+        <div className="flex items-center justify-between text-[10px] text-[#6b7d93] pt-2 border-t border-[#2a3a4e]">
+          <div>
+            Created: {proposal.created_at ? formatDistanceToNow(new Date(proposal.created_at), { addSuffix: true }) : "—"}
+          </div>
+          {proposal.updated_at && (
+            <div>
+              Updated: {formatDistanceToNow(new Date(proposal.updated_at), { addSuffix: true })}
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="pt-3 border-t border-[#2a3a4e] space-y-2">
+          {proposal.status === "PROPOSED" && (
+            <button
+              onClick={handleSendToOrg}
+              disabled={actionBusy}
+              className="w-full px-3 py-2 rounded text-[11px] font-semibold bg-teal-500/15 text-teal-400 border border-teal-500/30 hover:bg-teal-500/25 transition-colors disabled:opacity-50"
+            >
+              {actionBusy ? "Sending…" : "Send to Organization"}
+            </button>
+          )}
+
+          {proposal.status !== "DECLINED" && proposal.status !== "CONFIRMED" && proposal.status !== "PUBLISHED" && (
+            <button
+              onClick={handleDecline}
+              disabled={actionBusy}
+              className="w-full px-3 py-1.5 rounded text-[11px] font-medium text-red-400/80 border border-red-500/20 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+            >
+              {actionBusy ? "Declining…" : "Decline Proposal"}
+            </button>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// -------------------------------------------------------------------
 // Main ContextPanel
 // -------------------------------------------------------------------
 
@@ -2549,6 +3016,13 @@ export default function ContextPanel() {
           data={state.panelData}
           onClose={closePanel}
           onOpenMatch={openPanel}
+        />
+      )}
+      {state.panelType === "proposal" && state.panelData && (
+        <ProposalDetail
+          data={state.panelData}
+          onClose={closePanel}
+          onOpenNeed={openPanel}
         />
       )}
       {state.panelType === "operation" && state.panelData && (

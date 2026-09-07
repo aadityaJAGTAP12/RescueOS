@@ -64,6 +64,7 @@ const initialState = {
   needs: [],
   offers: [],
   operations: [],
+  proposals: [],
   fieldReports: [],
   overrides: {},
   activity: [],
@@ -107,6 +108,7 @@ const initialState = {
     needs: false,
     offers: false,
     operations: false,
+    proposals: false,
     fieldReports: false,
     activity: false,
     floodSnapshots: false,
@@ -219,6 +221,9 @@ function workspaceReducer(state, action) {
     case "SET_OPERATIONS":
       return { ...state, operations: action.payload, loading: { ...state.loading, operations: false } };
 
+    case "SET_PROPOSALS":
+      return { ...state, proposals: action.payload, loading: { ...state.loading, proposals: false } };
+
     case "SET_FIELD_REPORTS":
       return { ...state, fieldReports: action.payload, loading: { ...state.loading, fieldReports: false } };
 
@@ -230,6 +235,14 @@ function workspaceReducer(state, action) {
 
     case "SET_NOTIFICATIONS":
       return { ...state, notifications: action.payload };
+
+    case "MARK_NOTIFICATION_READ":
+      return {
+        ...state,
+        notifications: state.notifications.map((n) =>
+          n.id === action.payload ? { ...n, read: true } : n
+        ),
+      };
 
     case "SET_AI_ANALYSIS":
       return { ...state, aiAnalysis: action.payload, aiLoading: false };
@@ -261,7 +274,7 @@ function workspaceReducer(state, action) {
       return { ...state, orgError: action.payload, orgLoading: false };
 
     case "CLEAR_ORG_DATA":
-      return { ...state, needs: [], offers: [], operations: [] };
+      return { ...state, needs: [], offers: [], operations: [], proposals: [], notifications: [] };
 
     case "SET_SEARCH_QUERY":
       return { ...state, searchQuery: action.payload };
@@ -526,6 +539,31 @@ export function WorkspaceProvider({ children }) {
     }
   }, []);
 
+  const fetchProposals = useCallback(async (filters = {}) => {
+    dispatch({ type: "SET_LOADING", payload: { key: "proposals", value: true } });
+    try {
+      const params = new URLSearchParams();
+      if (filters.need_id) params.set("need_id", filters.need_id);
+      if (filters.organization_id) params.set("organization_id", filters.organization_id);
+      if (filters.status) params.set("status", filters.status);
+      const qs = params.toString();
+      const url = qs ? `/api/network/coordination/proposals?${qs}` : "/api/network/coordination/proposals";
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const data = await resp.json();
+        dispatch({ type: "SET_PROPOSALS", payload: data.proposals || [] });
+        return data.proposals || [];
+      } else {
+        dispatch({ type: "SET_LOADING", payload: { key: "proposals", value: false } });
+        return [];
+      }
+    } catch (err) {
+      console.error("Failed to fetch proposals:", err);
+      dispatch({ type: "SET_LOADING", payload: { key: "proposals", value: false } });
+      return [];
+    }
+  }, []);
+
   const fetchFieldReports = useCallback(async () => {
     dispatch({ type: "SET_LOADING", payload: { key: "fieldReports", value: true } });
     try {
@@ -570,15 +608,41 @@ export function WorkspaceProvider({ children }) {
     }
   }, []);
 
-  const fetchNotifications = useCallback(async () => {
+  const fetchNotifications = useCallback(async (options = {}) => {
     try {
-      const resp = await fetch("/api/notifications");
+      const params = new URLSearchParams();
+      if (options.recipient_id) {
+        params.set("recipient_id", options.recipient_id);
+      }
+      if (options.unread_only) {
+        params.set("unread_only", "true");
+      }
+      const qs = params.toString();
+      const url = qs ? `/api/notifications?${qs}` : "/api/notifications";
+      const resp = await fetch(url);
       if (resp.ok) {
         const data = await resp.json();
         dispatch({ type: "SET_NOTIFICATIONS", payload: data.notifications || [] });
+        return data.notifications || [];
       }
     } catch (err) {
       console.error("Failed to fetch notifications:", err);
+    }
+  }, []);
+
+  const markNotificationRead = useCallback(async (notificationId) => {
+    try {
+      const resp = await fetch(`/api/notifications/${notificationId}/read`, {
+        method: "POST",
+      });
+      if (resp.ok) {
+        dispatch({
+          type: "MARK_NOTIFICATION_READ",
+          payload: notificationId,
+        });
+      }
+    } catch (err) {
+      console.error("Failed to mark notification as read:", err);
     }
   }, []);
 
@@ -626,6 +690,7 @@ export function WorkspaceProvider({ children }) {
       fetchNeeds(state.filters),
       fetchOffers(state.filters),
       fetchOperations(state.filters),
+      fetchProposals(),
       fetchFieldReports(),
       fetchOverrides(),
       fetchActivity(),
@@ -645,6 +710,7 @@ export function WorkspaceProvider({ children }) {
     fetchNeeds,
     fetchOffers,
     fetchOperations,
+    fetchProposals,
     fetchFieldReports,
     fetchOverrides,
     fetchActivity,
@@ -778,6 +844,7 @@ export function WorkspaceProvider({ children }) {
       fetchNeeds(state.filters);
       fetchOffers(state.filters);
       fetchOperations(state.filters);
+      fetchProposals();
       fetchActivity();
       fetchNotifications();
       fetchAiAnalysis();
@@ -854,10 +921,12 @@ export function WorkspaceProvider({ children }) {
     fetchNeeds,
     fetchOffers,
     fetchOperations,
+    fetchProposals,
     fetchFieldReports,
     fetchOverrides,
     fetchActivity,
     fetchNotifications,
+    markNotificationRead,
     fetchAiAnalysis,
     fetchDelta,
     fetchOrganizations,

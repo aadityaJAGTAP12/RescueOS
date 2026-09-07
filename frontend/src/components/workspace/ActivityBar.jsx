@@ -174,6 +174,9 @@ export default function ActivityBar() {
     } else if (event.entity_type === "resource_offer") {
       const offer = state.offers.find(o => o.id === event.entity_id);
       if (offer) openPanel("offer", offer.id, offer);
+    } else if (event.entity_type === "coordination") {
+      const proposal = state.proposals?.find(p => p.id === event.entity_id);
+      openPanel("proposal", event.entity_id, proposal || { id: event.entity_id });
     }
   };
 

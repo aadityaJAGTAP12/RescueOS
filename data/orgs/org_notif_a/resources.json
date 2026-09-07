@@ -1,0 +1,22 @@
+[
+  {
+    "quantity": 10,
+    "resource_type": "water",
+    "unit": "liters",
+    "id": "res_28e825f4",
+    "org_id": "org_notif_a",
+    "created_at": "2026-09-07T23:01:25.893574+00:00",
+    "updated_at": "2026-09-07T23:01:25.893574+00:00",
+    "status": "available"
+  },
+  {
+    "quantity": 10,
+    "resource_type": "water",
+    "unit": "liters",
+    "id": "res_a03ea690",
+    "org_id": "org_notif_a",
+    "created_at": "2026-09-07T23:03:48.873571+00:00",
+    "updated_at": "2026-09-07T23:03:48.873571+00:00",
+    "status": "available"
+  }
+]

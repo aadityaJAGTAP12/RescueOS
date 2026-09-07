@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Shield, Bell, Search, ChevronDown, Radio, Brain,
   X, MapPin, AlertTriangle, Zap, Route, Landmark, Clock, Globe,
-  Stethoscope, Package, CheckCircle, Plus,
+  Stethoscope, Package, CheckCircle, Plus, Handshake, AlertCircle, CheckCheck,
 } from "lucide-react";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
@@ -181,10 +181,39 @@ const SEARCH_COLORS = {
   organization: "#2563eb",
 };
 
+const NOTIFICATION_ICONS = {
+  urgent_need: AlertTriangle,
+  coordination_proposed: Handshake,
+  coordination_proposal_received: Handshake,
+  coordination_recommendation_ready: Brain,
+  coordination_offer_published: Package,
+  coordination_proposal_declined: AlertCircle,
+};
+
+const NOTIFICATION_COLORS = {
+  urgent_need: "#dc2626",
+  coordination_proposed: "#4ea8de",
+  coordination_proposal_received: "#d97706",
+  coordination_recommendation_ready: "#7c3aed",
+  coordination_offer_published: "#10b981",
+  coordination_proposal_declined: "#6b7d93",
+};
+
 export default function WorkspaceHeader({ onOpenAI, mode, onModeChange }) {
-  const { state, setFilter, openPanel, setSelectedEntity, performSearch, setMapCenter, fetchDelta } = useWorkspace();
+  const {
+    state,
+    setFilter,
+    openPanel,
+    setSelectedEntity,
+    performSearch,
+    setMapCenter,
+    fetchDelta,
+    markNotificationRead,
+    fetchNotifications,
+  } = useWorkspace();
   const [timeContext, setTimeContext] = useState('CURRENT');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchIdx, setSearchIdx] = useState(0);
   const searchInputRef = useRef(null);
@@ -196,9 +225,11 @@ export default function WorkspaceHeader({ onOpenAI, mode, onModeChange }) {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         setSearchOpen((prev) => !prev);
+        setNotificationsOpen(false);
       }
       if (e.key === "Escape") {
         setSearchOpen(false);
+        setNotificationsOpen(false);
       }
     };
     window.addEventListener("keydown", handler);
@@ -218,6 +249,32 @@ export default function WorkspaceHeader({ onOpenAI, mode, onModeChange }) {
     performSearch(val);
     setSearchIdx(0);
   }, [performSearch]);
+
+  const handleNotificationClick = useCallback((n) => {
+    if (!n.read) {
+      markNotificationRead(n.id);
+    }
+    if (n.entity_type === "need" && n.entity_id) {
+      const match = state.needs.find((item) => item.id === n.entity_id);
+      openPanel("need", n.entity_id, match || { id: n.entity_id, title: n.title });
+    } else if ((n.entity_type === "coordination" || n.entity_type === "proposal") && n.entity_id) {
+      const match = state.proposals.find((p) => p.id === n.entity_id);
+      openPanel("proposal", n.entity_id, match || { id: n.entity_id, need_title: n.title, status: "SUBMITTED" });
+    } else if ((n.entity_type === "resource_offer" || n.entity_type === "offer") && n.entity_id) {
+      const match = state.offers.find((o) => o.id === n.entity_id);
+      openPanel("offer", n.entity_id, match || { id: n.entity_id });
+    } else if (n.entity_type === "operation" && n.entity_id) {
+      const match = state.operations.find((op) => op.id === n.entity_id);
+      openPanel("operation", n.entity_id, match || { id: n.entity_id });
+    }
+    setNotificationsOpen(false);
+  }, [markNotificationRead, openPanel, state.needs, state.proposals, state.offers, state.operations]);
+
+  const handleMarkAllRead = useCallback(() => {
+    state.notifications.filter((n) => !n.read).forEach((n) => {
+      markNotificationRead(n.id);
+    });
+  }, [state.notifications, markNotificationRead]);
 
   const handleSearchSelect = useCallback((result) => {
     // Focus map on the entity
@@ -375,14 +432,120 @@ export default function WorkspaceHeader({ onOpenAI, mode, onModeChange }) {
       </button>
 
       {/* Notifications */}
-      <button className="relative flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[#1a2332] transition-colors">
-        <Bell className="w-3.5 h-3.5 text-[#6b7d93]" />
-        {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[9px] font-bold text-white flex items-center justify-center">
-            {unreadCount > 9 ? "9+" : unreadCount}
-          </span>
+      <div className="relative">
+        <button
+          onClick={() => {
+            setNotificationsOpen(!notificationsOpen);
+            setSearchOpen(false);
+          }}
+          className={cn(
+            "relative flex items-center gap-1.5 px-2 py-1 rounded transition-colors",
+            notificationsOpen ? "bg-[#1a2332] border border-[#2a3a4e]" : "hover:bg-[#1a2332]"
+          )}
+          title="Notifications"
+        >
+          <Bell className="w-3.5 h-3.5 text-[#6b7d93]" />
+          {unreadCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[9px] font-bold text-white flex items-center justify-center">
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          )}
+        </button>
+
+        {notificationsOpen && (
+          <div className="absolute top-full right-0 mt-1 w-80 sm:w-96 bg-[#0f1419] border border-[#2a3a4e] rounded-lg shadow-2xl z-[9999] overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#2a3a4e]">
+              <div className="flex items-center gap-2">
+                <Bell className="w-4 h-4 text-[#4ea8de]" />
+                <span className="text-[12px] font-semibold text-[#c8d6e5]">Notifications</span>
+                {unreadCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 text-[10px] font-semibold">
+                    {unreadCount} unread
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {unreadCount > 0 && (
+                  <button
+                    onClick={handleMarkAllRead}
+                    className="flex items-center gap-1 text-[10px] text-[#4ea8de] hover:underline"
+                    title="Mark all as read"
+                  >
+                    <CheckCheck className="w-3 h-3" />
+                    Mark all read
+                  </button>
+                )}
+                <button
+                  onClick={() => setNotificationsOpen(false)}
+                  className="text-[#6b7d93] hover:text-[#c8d6e5] transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto divide-y divide-[#1a2332]">
+              {state.notifications.length === 0 ? (
+                <div className="p-6 text-center text-[12px] text-[#6b7d93]">
+                  No notifications yet.
+                </div>
+              ) : (
+                state.notifications.map((n) => {
+                  const Icon = NOTIFICATION_ICONS[n.notification_type] || Bell;
+                  const color = NOTIFICATION_COLORS[n.notification_type] || "#6b7d93";
+                  return (
+                    <div
+                      key={n.id}
+                      onClick={() => handleNotificationClick(n)}
+                      className={cn(
+                        "flex items-start gap-2.5 px-3 py-2.5 text-left cursor-pointer transition-colors group",
+                        n.read ? "hover:bg-[#1a2332]/40 opacity-70" : "bg-[#1a2332]/20 hover:bg-[#1a2332]/70"
+                      )}
+                    >
+                      <div
+                        className="w-6 h-6 rounded flex items-center justify-center shrink-0 mt-0.5"
+                        style={{ backgroundColor: `${color}15` }}
+                      >
+                        <Icon className="w-3 h-3" style={{ color }} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="text-[11px] font-medium text-[#c8d6e5] truncate">
+                            {n.title}
+                          </div>
+                          {!n.read && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#4ea8de] shrink-0" />
+                          )}
+                        </div>
+                        <div className="text-[10px] text-[#8b9bb4] line-clamp-2 mt-0.5">
+                          {n.message}
+                        </div>
+                        {n.created_at && (
+                          <div className="text-[9px] text-[#6b7d93] mt-1">
+                            {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        )}
+                      </div>
+                      {!n.read && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            markNotificationRead(n.id);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 text-[#6b7d93] hover:text-[#4ea8de] transition-opacity shrink-0 p-1"
+                          title="Mark as read"
+                        >
+                          <CheckCircle className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         )}
-      </button>
+      </div>
 
       {/* Search / Command palette */}
       <div className="relative">
