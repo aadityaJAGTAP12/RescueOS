@@ -1,20 +1,20 @@
 """
 Network Main Agent — Hierarchical Network Coordination
 
-Phase 7G: The Network Main Agent reasons over the shared emergency
+Phase 1 Agent Runtime: The Network Main Agent reasons over the shared emergency
 operating picture and coordinates with NGO Main Agents WITHOUT
 accessing private NGO state.
 
 Architecture:
     Network Main Agent
-    ├── Situation/Flood Worker
-    ├── Exposure Worker
-    ├── Medical Worker
-    ├── Logistics Worker
-    ├── Access/Routing Worker
-    ├── Field Intelligence Worker
-    ├── Coordination Worker
-    └── Evidence Worker
+    ├── SituationAgent
+    ├── ExposureAgent
+    ├── MedicalAgent
+    ├── LogisticsAgent
+    ├── AccessAgent
+    ├── FieldAgent
+    ├── CoordinationAgent
+    └── EvidenceAgent
 
 Design principles:
 - SHARED STATE ONLY: never reads NGO private inventory/teams/missions
@@ -22,22 +22,35 @@ Design principles:
 - Human-in-the-loop: recommendations are proposals, not commands
 - Evidence-based: every finding includes supporting evidence
 - Honest about uncertainty and data gaps
+- Error isolation: single worker failure does not crash overall pipeline
 """
 
 from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
+from typing import Any, Optional
 
-# Import workers
-from agent.agents.network_workers.situation import analyze_situation
-from agent.agents.network_workers.exposure import analyze_exposure
-from agent.agents.network_workers.medical import analyze_medical
-from agent.agents.network_workers.logistics import analyze_logistics
-from agent.agents.network_workers.access import analyze_access
-from agent.agents.network_workers.field import analyze_field_intelligence
-from agent.agents.network_workers.coordination import analyze_coordination
-from agent.agents.network_workers.evidence import synthesize_network_evidence
+from agent.agents.base import AgentFinding, FindingProvenance, FindingSeverity
+from agent.agents.events import AgentEvent, AgentEventType
+from agent.agents.network_workers import (
+    AccessAgent,
+    CoordinationAgent,
+    EvidenceAgent,
+    ExposureAgent,
+    FieldAgent,
+    LogisticsAgent,
+    MedicalAgent,
+    SituationAgent,
+    analyze_access,
+    analyze_coordination,
+    analyze_exposure,
+    analyze_field_intelligence,
+    analyze_logistics,
+    analyze_medical,
+    analyze_situation,
+    synthesize_network_evidence,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -52,9 +65,143 @@ class NetworkMainAgent:
     It does NOT access NGO private state.
     It produces recommendations that require human approval.
     """
+    agent_id: str = "network_main_agent"
+    name: str = "Network Main Agent"
+    domain: str = "network"
+    allowed_context: list[str] = ["shared_state"]
+    allowed_tools: list[str] = [
+        "flood_tool", "exposure_tool", "accessibility_tool",
+        "road_status_tool", "routing_tool", "allocation_tool",
+        "region_scan_tool", "field_intelligence_tool", "matching_core"
+    ]
+    accepted_event_types: list[str] = [
+        AgentEventType.NEED_CREATED.value,
+        AgentEventType.NEED_STATUS_CHANGED.value,
+        AgentEventType.OFFER_CREATED.value,
+        AgentEventType.OFFER_STATUS_CHANGED.value,
+        AgentEventType.OPERATION_CREATED.value,
+        AgentEventType.OPERATION_STATUS_CHANGED.value,
+        AgentEventType.FLOOD_SNAPSHOT_UPDATED.value,
+        AgentEventType.ROAD_OVERRIDE_APPLIED.value,
+        AgentEventType.BRIDGE_OVERRIDE_APPLIED.value,
+        AgentEventType.FIELD_REPORT_CREATED.value,
+        AgentEventType.COORDINATION_PROPOSAL_CREATED.value,
+        AgentEventType.COORDINATION_PROPOSAL_UPDATED.value,
+    ]
 
     def __init__(self):
         self.audit_log = []
+        # Explicit specialist worker agents
+        self.situation_agent = SituationAgent()
+        self.exposure_agent = ExposureAgent()
+        self.medical_agent = MedicalAgent()
+        self.logistics_agent = LogisticsAgent()
+        self.access_agent = AccessAgent()
+        self.field_agent = FieldAgent()
+        self.coordination_agent = CoordinationAgent()
+        self.evidence_agent = EvidenceAgent()
+
+        self._specialist_map = {
+            "situation": self.situation_agent,
+            "exposure": self.exposure_agent,
+            "medical": self.medical_agent,
+            "logistics": self.logistics_agent,
+            "access": self.access_agent,
+            "field": self.field_agent,
+            "coordination": self.coordination_agent,
+            "evidence": self.evidence_agent,
+        }
+
+    def handle_event(self, event: AgentEvent, repo=None) -> dict[str, Any]:
+        """
+        Process a machine-facing AgentEvent through deterministic specialist delegation.
+
+        Flow:
+            AgentEvent
+               ↓
+            Determine relevant specialists
+               ↓
+            Invoke specialists with failure isolation
+               ↓
+            Collect typed AgentFindings
+               ↓
+            Evidence synthesis
+               ↓
+            Structured orchestration result
+        """
+        if repo is None:
+            from agent.data.repository import get_repository
+            repo = get_repository()
+
+        t_start = time.time()
+
+        from agent.agents.event_router import EventRouter
+        relevant_domains = EventRouter.route_network_event(event)
+
+        collected_findings: list[AgentFinding] = []
+        data_gaps: list[dict[str, Any]] = []
+        worker_statuses: dict[str, str] = {}
+
+        for domain in relevant_domains:
+            specialist = self._specialist_map.get(domain)
+            if not specialist:
+                continue
+
+            try:
+                findings = specialist.handle_event(event, repo)
+                collected_findings.extend(findings)
+                worker_statuses[domain] = "success"
+            except Exception as e:
+                worker_statuses[domain] = "failed"
+                gap = {
+                    "item": f"Specialist failure: {domain}",
+                    "detail": f"Specialist '{domain}' failed during event handling: {str(e)}",
+                }
+                data_gaps.append(gap)
+                collected_findings.append(
+                    AgentFinding(
+                        agent_id=f"network_specialist_{domain}",
+                        domain=domain,
+                        finding_type="data_gap",
+                        summary=f"Worker {domain} failed to process event: {str(e)}",
+                        severity=FindingSeverity.INFORMATION.value,
+                        confidence=1.0,
+                        provenance=FindingProvenance.UNKNOWN,
+                        data_gaps=[gap],
+                    )
+                )
+
+        # Count severities
+        severity_counts = {"critical": 0, "urgent": 0, "information": 0, "stable": 0}
+        for f in collected_findings:
+            sev = f.severity if isinstance(f.severity, str) else f.severity.value
+            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
+        elapsed_ms = round((time.time() - t_start) * 1000, 1)
+
+        result = {
+            "orchestrator": self.agent_id,
+            "event_id": event.event_id,
+            "event_type": event.event_type if isinstance(event.event_type, str) else event.event_type.value,
+            "entity_type": event.entity_type,
+            "entity_id": event.entity_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "selected_specialists": relevant_domains,
+            "worker_statuses": worker_statuses,
+            "findings": [f.to_dict() for f in collected_findings],
+            "severity_summary": severity_counts,
+            "data_gaps": data_gaps,
+            "processing_time_ms": elapsed_ms,
+        }
+
+        self._audit("handle_event", {
+            "event_id": event.event_id,
+            "event_type": result["event_type"],
+            "findings_count": len(collected_findings),
+            "data_gaps_count": len(data_gaps),
+        })
+
+        return result
 
     def analyze_network(self, repo=None) -> dict:
         """

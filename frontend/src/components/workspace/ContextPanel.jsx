@@ -3,7 +3,7 @@ import {
   X, ArrowLeft, AlertTriangle, Package, Zap, FileText, Shield,
   Stethoscope, MapPin, Clock, Users, ChevronDown, Route,
   CheckCircle, Search, Handshake, Info, AlertCircle, HelpCircle, Globe,
-  Building2, Brain, Inbox, EyeOff,
+  Building2, Brain, Inbox, EyeOff, Crosshair,
 } from "lucide-react";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
@@ -1355,7 +1355,7 @@ function FacilityDetail({ data, override, onClose }) {
 // -------------------------------------------------------------------
 
 function CreateNeedForm({ onClose }) {
-  const { refreshAll } = useWorkspace();
+  const { state, refreshAll, startPinpoint, clearPinpoint } = useWorkspace();
   const [form, setForm] = useState({
     need_type: "food",
     title: "",
@@ -1368,6 +1368,22 @@ function CreateNeedForm({ onClose }) {
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+
+  // Auto-sync coordinates from pinpoint mode
+  useEffect(() => {
+    if (state.pinpointMode?.coords && state.pinpointMode.formType === "need") {
+      setForm((prev) => ({
+        ...prev,
+        lat: state.pinpointMode.coords.lat.toString(),
+        lon: state.pinpointMode.coords.lon.toString(),
+      }));
+    }
+  }, [state.pinpointMode?.coords, state.pinpointMode?.formType]);
+
+  const handleClose = () => {
+    clearPinpoint();
+    onClose();
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1384,6 +1400,7 @@ function CreateNeedForm({ onClose }) {
         }),
       });
       if (resp.ok) {
+        clearPinpoint();
         refreshAll();
         onClose();
       } else {
@@ -1404,7 +1421,7 @@ function CreateNeedForm({ onClose }) {
         icon={AlertTriangle}
         title="Create Need"
         subtitle="Report a resource need"
-        onClose={onClose}
+        onClose={handleClose}
         color="#dc2626"
       />
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -1472,23 +1489,49 @@ function CreateNeedForm({ onClose }) {
           />
         </Field>
 
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Latitude">
-            <input
-              value={form.lat}
-              onChange={(e) => setForm({ ...form, lat: e.target.value })}
-              placeholder="26.74"
-              className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
-            />
-          </Field>
-          <Field label="Longitude">
-            <input
-              value={form.lon}
-              onChange={(e) => setForm({ ...form, lon: e.target.value })}
-              placeholder="94.21"
-              className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
-            />
-          </Field>
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-medium text-[#c8d6e5]">Geographic Coordinates</span>
+            <button
+              type="button"
+              onClick={() => startPinpoint("need")}
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium border transition-all",
+                state.pinpointMode?.active && state.pinpointMode?.formType === "need"
+                  ? "bg-red-500/20 text-red-400 border-red-500/60 animate-pulse"
+                  : "bg-[#1a2332] text-[#c8d6e5] border-[#2a3a4e] hover:border-red-500/40 hover:text-red-400"
+              )}
+            >
+              <Crosshair className="w-3 h-3 text-red-400" />
+              {state.pinpointMode?.active && state.pinpointMode?.formType === "need"
+                ? "Pinpoint Active (Click Map)"
+                : "Pinpoint on Map"}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Latitude">
+              <input
+                value={form.lat}
+                onChange={(e) => setForm({ ...form, lat: e.target.value })}
+                placeholder="26.74"
+                className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+              />
+            </Field>
+            <Field label="Longitude">
+              <input
+                value={form.lon}
+                onChange={(e) => setForm({ ...form, lon: e.target.value })}
+                placeholder="94.21"
+                className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+              />
+            </Field>
+          </div>
+          {form.lat && form.lon && (
+            <div className="text-[10px] text-red-400/80 mt-1 flex items-center gap-1">
+              <MapPin className="w-3 h-3" />
+              Pinned at {form.lat}, {form.lon}
+            </div>
+          )}
         </div>
 
         {/* Error display */}
@@ -1519,14 +1562,30 @@ function CreateNeedForm({ onClose }) {
 // -------------------------------------------------------------------
 
 function CreateReportForm({ defaultData, onClose }) {
-  const { refreshAll } = useWorkspace();
+  const { state, refreshAll, startPinpoint, clearPinpoint } = useWorkspace();
   const [form, setForm] = useState({
     raw_text: "",
-    lat: defaultData?.lat || "",
-    lon: defaultData?.lon || "",
+    lat: defaultData?.lat ? defaultData.lat.toString() : "",
+    lon: defaultData?.lon ? defaultData.lon.toString() : "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+
+  // Auto-sync coordinates from pinpoint mode
+  useEffect(() => {
+    if (state.pinpointMode?.coords && state.pinpointMode.formType === "report") {
+      setForm((prev) => ({
+        ...prev,
+        lat: state.pinpointMode.coords.lat.toString(),
+        lon: state.pinpointMode.coords.lon.toString(),
+      }));
+    }
+  }, [state.pinpointMode?.coords, state.pinpointMode?.formType]);
+
+  const handleClose = () => {
+    clearPinpoint();
+    onClose();
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1536,9 +1595,14 @@ function CreateReportForm({ defaultData, onClose }) {
       const resp = await fetch("/api/field-intelligence", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ raw_text: form.raw_text }),
+        body: JSON.stringify({
+          raw_text: form.raw_text,
+          lat: form.lat ? parseFloat(form.lat) : null,
+          lon: form.lon ? parseFloat(form.lon) : null,
+        }),
       });
       if (resp.ok) {
+        clearPinpoint();
         refreshAll();
         onClose();
       } else {
@@ -1559,7 +1623,7 @@ function CreateReportForm({ defaultData, onClose }) {
         icon={FileText}
         title="Report Issue"
         subtitle="Submit a field/community report"
-        onClose={onClose}
+        onClose={handleClose}
         color="#4f46e5"
       />
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -1573,11 +1637,44 @@ function CreateReportForm({ defaultData, onClose }) {
           />
         </Field>
 
-        {form.lat && form.lon && (
-          <div className="text-[10px] text-[#6b7d93]">
-            📍 Location: {parseFloat(form.lat).toFixed(4)}, {parseFloat(form.lon).toFixed(4)}
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-medium text-[#c8d6e5]">Geographic Coordinates</span>
+            <button
+              type="button"
+              onClick={() => startPinpoint("report")}
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium border transition-all",
+                state.pinpointMode?.active && state.pinpointMode?.formType === "report"
+                  ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/60 animate-pulse"
+                  : "bg-[#1a2332] text-[#c8d6e5] border-[#2a3a4e] hover:border-indigo-500/40 hover:text-indigo-400"
+              )}
+            >
+              <Crosshair className="w-3 h-3 text-indigo-400" />
+              {state.pinpointMode?.active && state.pinpointMode?.formType === "report"
+                ? "Pinpoint Active (Click Map)"
+                : "Pinpoint on Map"}
+            </button>
           </div>
-        )}
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Latitude">
+              <input
+                value={form.lat}
+                onChange={(e) => setForm({ ...form, lat: e.target.value })}
+                placeholder="26.74"
+                className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+              />
+            </Field>
+            <Field label="Longitude">
+              <input
+                value={form.lon}
+                onChange={(e) => setForm({ ...form, lon: e.target.value })}
+                placeholder="94.21"
+                className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+              />
+            </Field>
+          </div>
+        </div>
 
         {/* Error display */}
         {error && (
@@ -1607,7 +1704,7 @@ function CreateReportForm({ defaultData, onClose }) {
 // -------------------------------------------------------------------
 
 function CreateOfferForm({ onClose }) {
-  const { state, refreshAll } = useWorkspace();
+  const { state, refreshAll, startPinpoint, clearPinpoint } = useWorkspace();
   const [form, setForm] = useState({
     resource_type: "boat",
     quantity: 1,
@@ -1634,6 +1731,22 @@ function CreateOfferForm({ onClose }) {
     }
   }, [state.orgId]);
 
+  // Auto-sync coordinates from pinpoint mode
+  useEffect(() => {
+    if (state.pinpointMode?.coords && state.pinpointMode.formType === "offer") {
+      setForm((prev) => ({
+        ...prev,
+        lat: state.pinpointMode.coords.lat.toString(),
+        lon: state.pinpointMode.coords.lon.toString(),
+      }));
+    }
+  }, [state.pinpointMode?.coords, state.pinpointMode?.formType]);
+
+  const handleClose = () => {
+    clearPinpoint();
+    onClose();
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (submittingRef.current) return;
@@ -1658,6 +1771,7 @@ function CreateOfferForm({ onClose }) {
         }),
       });
       if (resp.ok) {
+        clearPinpoint();
         refreshAll();
         onClose();
       } else {
@@ -1679,7 +1793,7 @@ function CreateOfferForm({ onClose }) {
         icon={Package}
         title="Offer Resource"
         subtitle="Publish available resources"
-        onClose={onClose}
+        onClose={handleClose}
         color="#0d9488"
       />
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -1752,23 +1866,49 @@ function CreateOfferForm({ onClose }) {
           />
         </Field>
 
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Latitude">
-            <input
-              value={form.lat}
-              onChange={(e) => setForm({ ...form, lat: e.target.value })}
-              placeholder="26.74"
-              className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
-            />
-          </Field>
-          <Field label="Longitude">
-            <input
-              value={form.lon}
-              onChange={(e) => setForm({ ...form, lon: e.target.value })}
-              placeholder="94.21"
-              className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
-            />
-          </Field>
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-medium text-[#c8d6e5]">Geographic Coordinates</span>
+            <button
+              type="button"
+              onClick={() => startPinpoint("offer")}
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium border transition-all",
+                state.pinpointMode?.active && state.pinpointMode?.formType === "offer"
+                  ? "bg-teal-500/20 text-teal-400 border-teal-500/60 animate-pulse"
+                  : "bg-[#1a2332] text-[#c8d6e5] border-[#2a3a4e] hover:border-teal-500/40 hover:text-teal-400"
+              )}
+            >
+              <Crosshair className="w-3 h-3 text-teal-400" />
+              {state.pinpointMode?.active && state.pinpointMode?.formType === "offer"
+                ? "Pinpoint Active (Click Map)"
+                : "Pinpoint on Map"}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Latitude">
+              <input
+                value={form.lat}
+                onChange={(e) => setForm({ ...form, lat: e.target.value })}
+                placeholder="26.74"
+                className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+              />
+            </Field>
+            <Field label="Longitude">
+              <input
+                value={form.lon}
+                onChange={(e) => setForm({ ...form, lon: e.target.value })}
+                placeholder="94.21"
+                className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+              />
+            </Field>
+          </div>
+          {form.lat && form.lon && (
+            <div className="text-[10px] text-teal-400/80 mt-1 flex items-center gap-1">
+              <MapPin className="w-3 h-3" />
+              Pinned at {form.lat}, {form.lon}
+            </div>
+          )}
         </div>
 
         <Field label="Notes">
@@ -1808,7 +1948,7 @@ function CreateOfferForm({ onClose }) {
 // -------------------------------------------------------------------
 
 function CreateOperationForm({ onClose }) {
-  const { refreshAll } = useWorkspace();
+  const { state, refreshAll, startPinpoint, clearPinpoint } = useWorkspace();
   const [form, setForm] = useState({
     name: "",
     operation_type: "supply_delivery",
@@ -1821,7 +1961,22 @@ function CreateOperationForm({ onClose }) {
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
-  const { state } = useWorkspace();
+
+  // Auto-sync coordinates from pinpoint mode
+  useEffect(() => {
+    if (state.pinpointMode?.coords && state.pinpointMode.formType === "operation") {
+      setForm((prev) => ({
+        ...prev,
+        lat: state.pinpointMode.coords.lat.toString(),
+        lon: state.pinpointMode.coords.lon.toString(),
+      }));
+    }
+  }, [state.pinpointMode?.coords, state.pinpointMode?.formType]);
+
+  const handleClose = () => {
+    clearPinpoint();
+    onClose();
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1840,7 +1995,7 @@ function CreateOperationForm({ onClose }) {
         }),
       });
       if (resp.ok) {
-        const result = await resp.json();
+        clearPinpoint();
         refreshAll();
         onClose();
       } else {
@@ -1861,7 +2016,7 @@ function CreateOperationForm({ onClose }) {
         icon={Zap}
         title="Create Operation"
         subtitle="Start a coordinated response"
-        onClose={onClose}
+        onClose={handleClose}
         color="#2563eb"
       />
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -1939,23 +2094,49 @@ function CreateOperationForm({ onClose }) {
           />
         </Field>
 
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Latitude">
-            <input
-              value={form.lat}
-              onChange={(e) => setForm({ ...form, lat: e.target.value })}
-              placeholder="26.74"
-              className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
-            />
-          </Field>
-          <Field label="Longitude">
-            <input
-              value={form.lon}
-              onChange={(e) => setForm({ ...form, lon: e.target.value })}
-              placeholder="94.21"
-              className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
-            />
-          </Field>
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-medium text-[#c8d6e5]">Geographic Coordinates</span>
+            <button
+              type="button"
+              onClick={() => startPinpoint("operation")}
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium border transition-all",
+                state.pinpointMode?.active && state.pinpointMode?.formType === "operation"
+                  ? "bg-blue-500/20 text-blue-400 border-blue-500/60 animate-pulse"
+                  : "bg-[#1a2332] text-[#c8d6e5] border-[#2a3a4e] hover:border-blue-500/40 hover:text-blue-400"
+              )}
+            >
+              <Crosshair className="w-3 h-3 text-blue-400" />
+              {state.pinpointMode?.active && state.pinpointMode?.formType === "operation"
+                ? "Pinpoint Active (Click Map)"
+                : "Pinpoint on Map"}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Latitude">
+              <input
+                value={form.lat}
+                onChange={(e) => setForm({ ...form, lat: e.target.value })}
+                placeholder="26.74"
+                className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+              />
+            </Field>
+            <Field label="Longitude">
+              <input
+                value={form.lon}
+                onChange={(e) => setForm({ ...form, lon: e.target.value })}
+                placeholder="94.21"
+                className="w-full px-2.5 py-1.5 rounded border border-[#2a3a4e] bg-[#0f1419] text-[12px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none"
+              />
+            </Field>
+          </div>
+          {form.lat && form.lon && (
+            <div className="text-[10px] text-blue-400/80 mt-1 flex items-center gap-1">
+              <MapPin className="w-3 h-3" />
+              Pinned at {form.lat}, {form.lon}
+            </div>
+          )}
         </div>
 
         {/* Error display */}
@@ -2996,11 +3177,478 @@ function ProposalDetail({ data, onClose, onOpenNeed }) {
 }
 
 // -------------------------------------------------------------------
+// Organizations list panel
+// -------------------------------------------------------------------
+
+function OrganizationsListPanel({ onClose }) {
+  const { state, openPanel } = useWorkspace();
+  const [searchTerm, setSearchTerm] = useState("");
+  const orgs = state.organizations || [];
+
+  const filtered = orgs.filter((org) => {
+    if (!searchTerm) return true;
+    const term = searchTerm.toLowerCase();
+    return (
+      org.name?.toLowerCase().includes(term) ||
+      org.organization_type?.toLowerCase().includes(term) ||
+      org.published_capabilities?.some((c) => c.toLowerCase().includes(term))
+    );
+  });
+
+  return (
+    <>
+      <PanelHeader
+        icon={Globe}
+        title="Organizations"
+        subtitle={`${filtered.length} registered organization${filtered.length !== 1 ? "s" : ""}`}
+        onClose={onClose}
+        color="#2563eb"
+      />
+      <div className="p-3 border-b border-[#2a3a4e]">
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 text-[#6b7d93] absolute left-2.5 top-2.5" />
+          <input
+            type="text"
+            placeholder="Filter organizations or capabilities..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-8 pr-3 py-1.5 rounded bg-[#1a2332] border border-[#2a3a4e] text-[11px] text-[#c8d6e5] placeholder:text-[#6b7d93] outline-none focus:border-[#3a5a7e]"
+          />
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+        {filtered.length === 0 ? (
+          <div className="text-center py-8 text-[11px] text-[#6b7d93]">
+            No organizations found
+          </div>
+        ) : (
+          filtered.map((org) => (
+            <div
+              key={org.id}
+              onClick={() => openPanel("organization", org.id, org)}
+              className="p-3 rounded bg-[#1a2332] border border-[#2a3a4e] hover:border-[#3a5a7e] cursor-pointer transition-colors space-y-1.5"
+            >
+              <div className="flex items-center justify-between">
+                <div className="text-[12px] font-semibold text-[#c8d6e5]">{org.name}</div>
+                <StatusBadge
+                  status={org.active ? "active" : "inactive"}
+                  color={org.active ? "#16a34a" : "#6b7d93"}
+                />
+              </div>
+              <div className="text-[10px] text-[#6b7d93] capitalize">
+                Type: {org.organization_type || "NGO"}
+              </div>
+              {org.description && (
+                <div className="text-[11px] text-[#a0aec0] line-clamp-2 leading-relaxed">
+                  {org.description}
+                </div>
+              )}
+              {org.published_capabilities && org.published_capabilities.length > 0 && (
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {org.published_capabilities.map((cap, i) => (
+                    <span
+                      key={i}
+                      className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                    >
+                      {cap}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+}
+
+// -------------------------------------------------------------------
+// Field reports list panel
+// -------------------------------------------------------------------
+
+function ReportsListPanel({ onClose }) {
+  const { state, openPanel, setMapCenter } = useWorkspace();
+  const reports = state.fieldReports || [];
+
+  const filtered = reports.filter((r) => {
+    if (state.filters.urgency && r.urgency && r.urgency !== state.filters.urgency) return false;
+    if (state.filters.status && r.status && r.status !== state.filters.status) return false;
+    return true;
+  });
+
+  return (
+    <>
+      <PanelHeader
+        icon={FileText}
+        title="Field Reports"
+        subtitle={`${filtered.length} report${filtered.length !== 1 ? "s" : ""}`}
+        onClose={onClose}
+        color="#4f46e5"
+      />
+      <div className="p-3 border-b border-[#2a3a4e] flex items-center justify-between">
+        <div className="text-[10px] text-[#6b7d93]">
+          {state.filters.district ? `District: ${state.filters.district}` : "All Districts"}
+        </div>
+        <button
+          onClick={() => openPanel("createReport")}
+          className="px-2.5 py-1 rounded text-[11px] font-medium bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-500/25 transition-colors"
+        >
+          + Submit Report
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+        {filtered.length === 0 ? (
+          <div className="text-center py-8 text-[11px] text-[#6b7d93]">
+            No field reports match current filters
+          </div>
+        ) : (
+          filtered.map((report) => {
+            const verified = report.verified || report.source === "field_intelligence_text";
+            return (
+              <div
+                key={report.id || report.report_id}
+                onClick={() => {
+                  if (report.lat && report.lon) {
+                    setMapCenter([report.lat, report.lon], 13);
+                  }
+                  openPanel("report", report.id || report.report_id, report);
+                }}
+                className="p-3 rounded bg-[#1a2332] border border-[#2a3a4e] hover:border-[#3a5a7e] cursor-pointer transition-colors space-y-1.5"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px] font-medium text-[#c8d6e5]">
+                    {report.title || `${report.people_count || "Field"} People Reported`}
+                  </span>
+                  <StatusBadge
+                    status={verified ? "verified" : "unverified"}
+                    color={verified ? "#16a34a" : "#d97706"}
+                  />
+                </div>
+                <div className="text-[11px] text-[#a0aec0] line-clamp-2">
+                  {report.note || report.raw_text || (report.needs ? `Needs: ${report.needs.join(", ")}` : "No description")}
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-[#6b7d93] pt-1">
+                  <span>Source: {report.source || "field"}</span>
+                  {report.timestamp && (
+                    <span>{_timeAgo(report.timestamp)}</span>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </>
+  );
+}
+
+// -------------------------------------------------------------------
+// Active overrides list panel
+// -------------------------------------------------------------------
+
+function OverridesListPanel({ onClose }) {
+  const { state, openPanel, setMapCenter } = useWorkspace();
+  const overrides = state.overrides || {};
+  const entries = Object.entries(overrides).map(([key, val]) => ({
+    target_id: key,
+    ...val,
+  }));
+
+  return (
+    <>
+      <PanelHeader
+        icon={Zap}
+        title="Active Overrides"
+        subtitle={`${entries.length} override${entries.length !== 1 ? "s" : ""}`}
+        onClose={onClose}
+        color="#f59e0b"
+      />
+      <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+        {entries.length === 0 ? (
+          <div className="text-center py-8 text-[11px] text-[#6b7d93]">
+            No manual overrides active
+          </div>
+        ) : (
+          entries.map((ov, idx) => (
+            <div
+              key={idx}
+              onClick={() => {
+                const facility = state.medicalFacilities.find((f) => f.name === ov.target_id || f.id === ov.target_id);
+                if (facility) {
+                  if (facility.lat && facility.lon) setMapCenter([facility.lat, facility.lon], 14);
+                  openPanel("facility", facility.id, facility);
+                }
+              }}
+              className="p-3 rounded bg-[#1a2332] border border-[#2a3a4e] hover:border-[#3a5a7e] cursor-pointer transition-colors space-y-1.5"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-medium text-[#c8d6e5]">{ov.target_id}</span>
+                <StatusBadge
+                  status={ov.override_status || ov.status || "OVERRIDE"}
+                  color="#f59e0b"
+                />
+              </div>
+              {ov.reason && (
+                <div className="text-[11px] text-[#a0aec0]">
+                  Reason: {ov.reason}
+                </div>
+              )}
+              <div className="flex items-center justify-between text-[10px] text-[#6b7d93] pt-1">
+                <span>By: {ov.actor || "Operator"}</span>
+                {ov.timestamp && <span>{_timeAgo(ov.timestamp)}</span>}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+}
+
+// -------------------------------------------------------------------
+// Needs list panel
+// -------------------------------------------------------------------
+
+function NeedsListPanel({ onClose }) {
+  const { state, openPanel, setMapCenter } = useWorkspace();
+  const needs = state.needs || [];
+
+  const filtered = needs.filter((n) => {
+    if (state.filters.district && n.district_id !== state.filters.district) return false;
+    if (state.filters.urgency && n.urgency !== state.filters.urgency) return false;
+    if (state.filters.status && n.status !== state.filters.status) return false;
+    return true;
+  });
+
+  const urgencyColor = {
+    critical: "#dc2626",
+    high: "#d97706",
+    medium: "#eab308",
+    low: "#16a34a",
+  };
+
+  return (
+    <>
+      <PanelHeader
+        icon={AlertTriangle}
+        title="Needs Directory"
+        subtitle={`${filtered.length} need${filtered.length !== 1 ? "s" : ""}`}
+        onClose={onClose}
+        color="#dc2626"
+      />
+      <div className="p-3 border-b border-[#2a3a4e] flex items-center justify-between">
+        <div className="text-[10px] text-[#6b7d93]">
+          {state.filters.urgency ? `Urgency: ${state.filters.urgency}` : "All Urgencies"} · {state.filters.status ? `Status: ${state.filters.status}` : "All Statuses"}
+        </div>
+        <button
+          onClick={() => openPanel("createNeed")}
+          className="px-2.5 py-1 rounded text-[11px] font-medium bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25 transition-colors"
+        >
+          + Log Need
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+        {filtered.length === 0 ? (
+          <div className="text-center py-8 text-[11px] text-[#6b7d93]">
+            No needs match current filters
+          </div>
+        ) : (
+          filtered.map((need) => (
+            <div
+              key={need.id}
+              onClick={() => {
+                if (need.lat && need.lon) setMapCenter([need.lat, need.lon], 13);
+                openPanel("need", need.id, need);
+              }}
+              className="p-3 rounded bg-[#1a2332] border border-[#2a3a4e] hover:border-[#3a5a7e] cursor-pointer transition-colors space-y-1.5"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-medium text-[#c8d6e5]">{need.title || need.need_type}</span>
+                <StatusBadge
+                  status={need.urgency || "normal"}
+                  color={urgencyColor[need.urgency] || "#6b7d93"}
+                />
+              </div>
+              <div className="text-[11px] text-[#a0aec0]">
+                {need.people_affected ? `${need.people_affected} people affected` : (need.description || need.need_type)}
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-[#6b7d93] pt-1">
+                <span>📍 {need.location_name || need.district_id || "Unspecified"}</span>
+                <span className="capitalize">Status: {need.status}</span>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+}
+
+// -------------------------------------------------------------------
+// Offers list panel
+// -------------------------------------------------------------------
+
+function OffersListPanel({ onClose }) {
+  const { state, openPanel, setMapCenter } = useWorkspace();
+  const offers = state.offers || [];
+
+  const filtered = offers.filter((o) => {
+    if (state.filters.district && o.district_id !== state.filters.district) return false;
+    return true;
+  });
+
+  return (
+    <>
+      <PanelHeader
+        icon={Package}
+        title="Resource Offers"
+        subtitle={`${filtered.length} offer${filtered.length !== 1 ? "s" : ""}`}
+        onClose={onClose}
+        color="#0d9488"
+      />
+      <div className="p-3 border-b border-[#2a3a4e] flex items-center justify-between">
+        <div className="text-[10px] text-[#6b7d93]">
+          {state.filters.district ? `District: ${state.filters.district}` : "All Districts"}
+        </div>
+        <button
+          onClick={() => openPanel("createOffer")}
+          className="px-2.5 py-1 rounded text-[11px] font-medium bg-teal-500/15 text-teal-400 border border-teal-500/30 hover:bg-teal-500/25 transition-colors"
+        >
+          + Submit Offer
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+        {filtered.length === 0 ? (
+          <div className="text-center py-8 text-[11px] text-[#6b7d93]">
+            No resource offers match current filters
+          </div>
+        ) : (
+          filtered.map((offer) => (
+            <div
+              key={offer.id}
+              onClick={() => {
+                if (offer.lat && offer.lon) setMapCenter([offer.lat, offer.lon], 13);
+                openPanel("offer", offer.id, offer);
+              }}
+              className="p-3 rounded bg-[#1a2332] border border-[#2a3a4e] hover:border-[#3a5a7e] cursor-pointer transition-colors space-y-1.5"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-medium text-[#c8d6e5]">{offer.resource_type}</span>
+                <StatusBadge
+                  status={offer.status || "OFFERED"}
+                  color="#0d9488"
+                />
+              </div>
+              <div className="text-[11px] text-[#a0aec0]">
+                Quantity: {offer.quantity} {offer.unit}
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-[#6b7d93] pt-1">
+                <span>Org: {offer.organization_name || offer.organization_id || "NGO"}</span>
+                <span>📍 {offer.location_name || offer.district_id || "—"}</span>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+}
+
+// -------------------------------------------------------------------
+// Operations list panel
+// -------------------------------------------------------------------
+
+function OperationsListPanel({ onClose }) {
+  const { state, openPanel, setMapCenter } = useWorkspace();
+  const operations = state.operations || [];
+
+  const filtered = operations.filter((op) => {
+    if (state.filters.district && op.district_id !== state.filters.district) return false;
+    if (state.filters.status) {
+      const statusMap = { OPEN: "PLANNING", RESPONDING: "ACTIVE", RESOLVED: "COMPLETED" };
+      const targetStatus = statusMap[state.filters.status] || state.filters.status;
+      if (op.status !== targetStatus) return false;
+    }
+    return true;
+  });
+
+  const statusColor = {
+    PLANNING: "#2563eb",
+    ACTIVE: "#16a34a",
+    PAUSED: "#d97706",
+    COMPLETED: "#6b7280",
+    CANCELLED: "#9ca3af",
+  };
+
+  return (
+    <>
+      <PanelHeader
+        icon={Shield}
+        title="Operations"
+        subtitle={`${filtered.length} operation${filtered.length !== 1 ? "s" : ""}`}
+        onClose={onClose}
+        color="#2563eb"
+      />
+      <div className="p-3 border-b border-[#2a3a4e] flex items-center justify-between">
+        <div className="text-[10px] text-[#6b7d93]">
+          {state.filters.status ? `Status: ${state.filters.status}` : "All Operations"}
+        </div>
+        <button
+          onClick={() => openPanel("createOperation")}
+          className="px-2.5 py-1 rounded text-[11px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30 hover:bg-blue-500/25 transition-colors"
+        >
+          + Launch Operation
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+        {filtered.length === 0 ? (
+          <div className="text-center py-8 text-[11px] text-[#6b7d93]">
+            No operations match current filters
+          </div>
+        ) : (
+          filtered.map((op) => (
+            <div
+              key={op.id}
+              onClick={() => {
+                if (op.lat && op.lon) setMapCenter([op.lat, op.lon], 13);
+                openPanel("operation", op.id, op);
+              }}
+              className="p-3 rounded bg-[#1a2332] border border-[#2a3a4e] hover:border-[#3a5a7e] cursor-pointer transition-colors space-y-1.5"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-medium text-[#c8d6e5]">{op.name || op.operation_type}</span>
+                <StatusBadge
+                  status={op.status || "PLANNING"}
+                  color={statusColor[op.status] || "#6b7280"}
+                />
+              </div>
+              <div className="text-[11px] text-[#a0aec0]">
+                Type: {op.operation_type}
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-[#6b7d93] pt-1">
+                <span>📍 {op.location_name || op.district_id || "—"}</span>
+                {op.assigned_team && <span>Team: {op.assigned_team}</span>}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+}
+
+// -------------------------------------------------------------------
 // Main ContextPanel
 // -------------------------------------------------------------------
 
 export default function ContextPanel() {
-  const { state, closePanel, openPanel } = useWorkspace();
+  const { state, closePanel, openPanel, clearPinpoint } = useWorkspace();
+
+  const handleClosePanel = () => {
+    clearPinpoint();
+    closePanel();
+  };
 
   if (!state.panelOpen) return null;
 
@@ -3014,7 +3662,7 @@ export default function ContextPanel() {
       {state.panelType === "need" && state.panelData && (
         <NeedDetail
           data={state.panelData}
-          onClose={closePanel}
+          onClose={handleClosePanel}
           onOpenMatch={openPanel}
         />
       )}
@@ -3050,26 +3698,44 @@ export default function ContextPanel() {
       {state.panelType === "organization" && state.panelData && (
         <OrganizationDetail data={state.panelData} onClose={closePanel} />
       )}
+      {state.panelType === "organizationsList" && (
+        <OrganizationsListPanel onClose={closePanel} />
+      )}
+      {state.panelType === "reportsList" && (
+        <ReportsListPanel onClose={closePanel} />
+      )}
+      {state.panelType === "overridesList" && (
+        <OverridesListPanel onClose={closePanel} />
+      )}
+      {state.panelType === "needsList" && (
+        <NeedsListPanel onClose={closePanel} />
+      )}
+      {state.panelType === "offersList" && (
+        <OffersListPanel onClose={closePanel} />
+      )}
+      {state.panelType === "operationsList" && (
+        <OperationsListPanel onClose={closePanel} />
+      )}
       {state.panelType === "building" && state.panelData && (
         <BuildingDetail data={state.panelData} onClose={closePanel} />
       )}
       {state.panelType === "incident" && (
-        <IncidentEmptyState onClose={closePanel} />
+        <IncidentEmptyState onClose={handleClosePanel} />
       )}
       {state.panelType === "createNeed" && (
-        <CreateNeedForm onClose={closePanel} />
+        <CreateNeedForm onClose={handleClosePanel} />
       )}
       {state.panelType === "createReport" && (
-        <CreateReportForm defaultData={state.panelData} onClose={closePanel} />
+        <CreateReportForm defaultData={state.panelData} onClose={handleClosePanel} />
       )}
       {state.panelType === "createOffer" && (
-        <CreateOfferForm onClose={closePanel} />
+        <CreateOfferForm onClose={handleClosePanel} />
       )}
       {state.panelType === "createOperation" && (
-        <CreateOperationForm onClose={closePanel} />
+        <CreateOperationForm onClose={handleClosePanel} />
       )}
       {state.panelType === "aiAnalysis" && (
-        <AIAnalysisPanel onClose={closePanel} />
+        <AIAnalysisPanel onClose={handleClosePanel} />
       )}
     </div>
   );

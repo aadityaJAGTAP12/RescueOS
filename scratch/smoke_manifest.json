@@ -1,0 +1,62 @@
+{
+  "tag": "28a56f13",
+  "org_alpha": "org_alpha_28a56f13",
+  "org_beta": "org_beta_28a56f13",
+  "users": {
+    "alpha_admin": {
+      "username": "alpha_admin_28a56f13",
+      "id": "usr_c70c1192-800",
+      "role": "ORG_ADMIN"
+    },
+    "alpha_op": {
+      "username": "alpha_op_28a56f13",
+      "id": "usr_9c3dcee4-1df",
+      "role": "ORG_OPERATOR"
+    },
+    "beta_admin": {
+      "username": "beta_admin_28a56f13",
+      "id": "usr_b15846eb-713",
+      "role": "ORG_ADMIN"
+    },
+    "netop": {
+      "username": "netop_28a56f13",
+      "id": "usr_f53e1a8a-649",
+      "role": "NETWORK_OPERATOR"
+    }
+  },
+  "password": "Sm0keTest-Passw0rd!",
+  "server_pid": 27380,
+  "spoofed_offer_id": "offer_f274e9ae",
+  "sec_proposal_id": "prop_4fb0567c",
+  "need_id": "need_c4d04df7",
+  "offer_id": "offer_eeeded9a",
+  "proposal_id": "prop_c272117d",
+  "private_resource_id": "res_12437015",
+  "pub_offer_id": "offer_00431172",
+  "outbox_event_id": "evt_be662c48-ee3",
+  "scan_id": "scan_2c77727b-7ba",
+  "restart": {
+    "need_id": "need_2cece66d",
+    "offer_id": "offer_963dc72d",
+    "op_id": "op_ff887756",
+    "proposal_id": "prop_83247ebc",
+    "event_id": "evt_e7a62782-cfe",
+    "scan_id": "scan_f05354ab-80b",
+    "finding_id": "fnd_56ae9e08-503",
+    "private_resource_id": "res_d27a9280",
+    "private_marker": "PRIVATE-RESTART-MARKER-21e38b",
+    "audit_before": [
+      "aud_387323c2-487",
+      "aud_79968856-fe8",
+      "aud_680ac8ea-df1",
+      "aud_3a408d62-b2b",
+      "aud_9034e069-6e2",
+      "aud_dade1bc7-717",
+      "aud_7580906a-8df",
+      "aud_3c849c39-3a0",
+      "aud_93d6a7d6-2de",
+      "aud_ec707c5f-1a2"
+    ]
+  },
+  "planted_stale_event_id": "evt_planted_stale_21e38b"
+}

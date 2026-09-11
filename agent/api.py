@@ -19,6 +19,11 @@ import gzip
 import hashlib
 from datetime import datetime, timezone
 
+from dotenv import load_dotenv
+
+# Automatically load environment variables from .env file at repo root
+load_dotenv()
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -39,11 +44,101 @@ from agent.data_loader import FLOOD_DATA, get_flood_data, get_all_known_location
 
 
 # ---------------------------------------------------------------------------
-# App setup
+# App setup & Production Middleware
 # ---------------------------------------------------------------------------
 
+from agent.middleware import register_observability_middleware, register_security_middleware
+from agent.auth import (
+    AuthService,
+    require_auth,
+    require_org_role,
+    require_network_operator,
+    resolve_request_principal,
+    is_auth_enforced,
+    UserRole,
+)
+from agent.audit import record_audit_log as _record_audit_log
+from agent.validation.validators import (
+    ValidationError,
+    validate_id,
+    validate_coordinates,
+    validate_pagination,
+    validate_urgency,
+    validate_need_status,
+    validate_offer_status,
+    validate_operation_status,
+    validate_need_payload,
+    validate_offer_payload,
+    sanitize_text,
+)
+
+
+def _api_error(e: Exception, status: int = 500):
+    """Sanitized internal error response.
+
+    Never leaks exception text, SQL, paths, or config in any environment:
+    full detail stays on the server side via the logging handlers.
+    """
+    if hasattr(g, "request_id"):
+        logger.warning(
+            "[RequestID: %s] endpoint error (%s): %s",
+            g.request_id, type(e).__name__, e,
+        )
+    return jsonify({"error": f"{type(e).__name__}: internal error"}), status
+
+
+_AUTH_COOKIE_MAX_AGE = 86400
+
+
+def _set_auth_cookie(resp, token: str):
+    """Attach the session token cookie with production-appropriate flags."""
+    secure = is_auth_enforced()
+    resp.set_cookie(
+        "reliefos_auth_token",
+        token,
+        max_age=_AUTH_COOKIE_MAX_AGE,
+        samesite="Lax",
+        httponly=True,
+        secure=secure,
+    )
+    return resp
+
+
+def _clear_auth_cookie(resp):
+    secure = is_auth_enforced()
+    resp.set_cookie(
+        "reliefos_auth_token", "", max_age=0, samesite="Lax", httponly=True, secure=secure
+    )
+    return resp
+
+
+from agent.audit import record_audit_log
+from agent.data.repository import get_repository
+from flask import g
+
+import logging as _logging
+logger = _logging.getLogger("reliefos.api")
+
 app = Flask(__name__)
-CORS(app)
+
+# CORS: allow-list only explicitly trusted origins. supports_credentials is
+# required for the session/auth cookies; an unrestricted origin list with
+# credentials would let any site ride an operator's session.
+from agent.config import get_settings as _get_settings
+_settings = _get_settings()
+CORS(
+    app,
+    resources={r"/api/*": {"origins": _settings.cors_allowed_origins}},
+    supports_credentials=True,
+)
+
+# Register security headers and observability request tracing
+register_observability_middleware(app)
+register_security_middleware(app)
+
+# Initialize AuthService on the Flask app
+app.auth_service = AuthService(repository=get_repository())
+
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +214,215 @@ DATA_GAPS = [
     {"item": "Itemized inventory tracking", "status": "not_implemented",
      "detail": "Per-location resource inventory not yet tracked."},
 ]
+
+
+# ---------------------------------------------------------------------------
+# Health, Auth & Observability Endpoints — Production Hardening
+# ---------------------------------------------------------------------------
+
+@app.route("/api/health/liveness", methods=["GET"])
+def api_health_liveness():
+    """Liveness probe: verifies process is running and accepting HTTP requests."""
+    from agent.config import get_settings
+    return jsonify({
+        "status": "alive",
+        "service": "reliefos-backend",
+        "environment": get_settings().environment,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }), 200
+
+
+@app.route("/api/health/readiness", methods=["GET"])
+def api_health_readiness():
+    """Readiness probe: verifies repository connectivity and basic operational health."""
+    from agent.config import get_settings
+    settings = get_settings()
+    repo = get_repository()
+    try:
+        settlements_count = len(repo.list_settlements()) if hasattr(repo, "list_settlements") else 0
+        return jsonify({
+            "status": "ready",
+            "database": "connected",
+            "repository": type(repo).__name__,
+            "settlements_count": settlements_count,
+            "environment": settings.environment,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }), 200
+    except Exception as e:
+        # Log detail server-side; never expose DB errors (connection strings,
+        # host names) through the probe.
+        logger.error("Readiness check failed: %s", e)
+        return jsonify({
+            "status": "unhealthy",
+            "database": "error",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }), 503
+
+
+@app.route("/api/auth/register", methods=["POST"])
+def api_auth_register():
+    """Register a new user and assign initial organization membership."""
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+    email = data.get("email", "").strip()
+    full_name = data.get("full_name", "").strip()
+    initial_org_id = data.get("initial_org_id")
+    initial_role = data.get("initial_role", UserRole.ORG_OPERATOR.value)
+
+    if not username or not password:
+        return jsonify({"error": "Username and password are required", "code": "VALIDATION_ERROR"}), 400
+
+    # Fail closed: in production, self-service org binding via registration
+    # is disabled — memberships must be granted by a NETWORK_OPERATOR.
+    if is_auth_enforced() and initial_org_id:
+        return jsonify({"error": "Organization binding requires a network operator", "code": "FORBIDDEN"}), 403
+
+    try:
+        user, membership = app.auth_service.register_user(
+            username=username,
+            email=email,
+            password=password,
+            full_name=full_name,
+            initial_org_id=initial_org_id,
+            initial_role=initial_role,
+        )
+        token = app.auth_service.create_token_for_user(user)
+
+        repo = get_repository()
+        record_audit_log(
+            repo,
+            action="register_user",
+            entity_type="user",
+            entity_id=user.id,
+            organization_id=initial_org_id,
+            details={"username": username, "email": email, "role": initial_role if membership else None},
+        )
+
+        resp = jsonify({
+            "token": token,
+            "user": user.to_dict(),
+            "membership": membership.to_dict() if membership else None,
+        })
+        _set_auth_cookie(resp, token)
+        if initial_org_id:
+            set_current_org_cookie(resp, initial_org_id)
+        return resp, 201
+    except ValueError as e:
+        return jsonify({"error": str(e), "code": "REGISTRATION_FAILED"}), 400
+    except Exception as e:
+        return _api_error(e)
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    """Authenticate user with username/email and password."""
+    data = request.get_json(silent=True) or {}
+    username_or_email = data.get("username") or data.get("email") or ""
+    password = data.get("password", "")
+
+    if not username_or_email or not password:
+        return jsonify({"error": "Username/email and password required", "code": "VALIDATION_ERROR"}), 400
+
+    user = app.auth_service.authenticate(username_or_email, password)
+    if not user:
+        return jsonify({"error": "Invalid username or password", "code": "INVALID_CREDENTIALS"}), 401
+
+    principal = app.auth_service.get_principal(user.id)
+    token = app.auth_service.create_token_for_user(user)
+
+    repo = get_repository()
+    record_audit_log(
+        repo,
+        action="login_success",
+        entity_type="user",
+        entity_id=user.id,
+        actor_id=user.id,
+        details={"username": user.username},
+    )
+
+    resp = jsonify({
+        "token": token,
+        "user": user.to_dict(),
+        "memberships": [m.to_dict() for m in (principal.memberships if principal else [])],
+        "is_network_operator": principal.is_network_operator if principal else False,
+    })
+    _set_auth_cookie(resp, token)
+    if principal and principal.memberships:
+        set_current_org_cookie(resp, principal.memberships[0].organization_id)
+    return resp, 200
+
+
+@app.route("/api/auth/me", methods=["GET"])
+def api_auth_me():
+    """Retrieve current authenticated user context and organization memberships."""
+    principal = resolve_request_principal(request)
+    if not principal:
+        if is_auth_enforced():
+            return jsonify({"error": "Authentication required", "code": "UNAUTHORIZED"}), 401
+        return jsonify({
+            "authenticated": False,
+            "user": None,
+            "memberships": [],
+            "is_network_operator": False,
+        }), 200
+
+    return jsonify({
+        "authenticated": True,
+        "user": principal.user.to_dict(),
+        "memberships": [m.to_dict() for m in principal.memberships],
+        "is_network_operator": principal.is_network_operator,
+    }), 200
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    """Log out current user and clear authentication cookies."""
+    principal = resolve_request_principal(request)
+    if principal:
+        repo = get_repository()
+        record_audit_log(
+            repo,
+            action="logout",
+            entity_type="user",
+            entity_id=principal.user_id,
+            actor_id=principal.user_id,
+        )
+
+    resp = jsonify({"status": "logged_out"})
+    _clear_auth_cookie(resp)
+    return resp, 200
+
+
+@app.route("/api/audit/logs", methods=["GET"])
+@require_network_operator
+def api_audit_logs():
+    """List consequential action audit records with pagination and filtering."""
+    from agent.validation import validate_pagination
+    limit, offset = validate_pagination(
+        request.args.get("limit", 50),
+        request.args.get("offset", 0),
+    )
+    entity_type = request.args.get("entity_type")
+    action = request.args.get("action")
+    org_id = request.args.get("organization_id")
+    actor_id = request.args.get("actor_id")
+
+    repo = get_repository()
+    logs = repo.list_audit_logs(
+        entity_type=entity_type,
+        action=action,
+        organization_id=org_id,
+        actor_id=actor_id,
+        limit=limit,
+        offset=offset,
+    )
+    return jsonify({
+        "logs": [log.to_dict() for log in logs],
+        "count": len(logs),
+        "limit": limit,
+        "offset": offset,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -456,21 +760,51 @@ def api_field_intelligence():
     if not payload or not payload.get("raw_text"):
         return jsonify({"error": "Body must include 'raw_text'"}), 400
 
-    raw_text = payload["raw_text"]
+    try:
+        raw_text = payload["raw_text"]
 
-    # Extract structured fields via LLM
-    extraction = extract_field_report(raw_text)
+        # Extract structured fields via LLM
+        extraction = extract_field_report(raw_text)
 
-    # Store the report (no lat/lon — location is unresolved text)
-    store_result = submit_field_intelligence(extraction)
+        # Store the report (with coordinates if explicitly provided, else unresolved text)
+        lat = payload.get("lat")
+        lon = payload.get("lon")
+        store_result = submit_field_intelligence(extraction, lat=float(lat) if lat is not None else None, lon=float(lon) if lon is not None else None)
 
-    return jsonify({
-        "extraction": extraction,
-        "store_result": store_result,
-    })
+        # Consequential: a new field report enters the shared operational state.
+        if store_result.get("success") and store_result.get("report_id"):
+            try:
+                record_audit_log(
+                    get_repository(),
+                    action="submit_field_report",
+                    entity_type="field_report",
+                    entity_id=store_result["report_id"],
+                    organization_id=None,
+                    details={"source": "field_intelligence_text", "confidence": extraction.get("confidence", 0.7)},
+                )
+            except Exception:
+                logger.warning("Field report audit logging failed", exc_info=True)
+
+            try:
+                from agent.agents.events import make_field_report_event
+                get_repository().append_agent_event(make_field_report_event(
+                    report_id=store_result["report_id"],
+                    district=extraction.get("district"),
+                    metadata={"raw_text": raw_text[:200], "confidence": extraction.get("confidence", 0.7)},
+                ))
+            except Exception:
+                pass
+
+        return jsonify({
+            "extraction": extraction,
+            "store_result": store_result,
+        })
+    except Exception as e:
+        return _api_error(e)
 
 
 @app.route("/api/field-intelligence/history", methods=["GET"])
+@require_auth
 def api_field_intelligence_history():
     """Return all field intelligence reports."""
     all_reports = get_all_reports()
@@ -483,6 +817,7 @@ def api_field_intelligence_history():
 # ---------------------------------------------------------------------------
 
 @app.route("/api/override", methods=["POST"])
+@require_network_operator
 def api_apply_override():
     """
     Apply a manual override to a facility or road status.
@@ -521,6 +856,21 @@ def api_apply_override():
         actor=actor,
         system_status=system_status,
     )
+
+    try:
+        from agent.data.repository import get_repository
+        record_audit_log(
+            get_repository(),
+            action="apply_override",
+            entity_type="override",
+            entity_id=record.get("id", f"{target_type}:{target_id}"),
+            actor_id=actor,
+            from_state=system_status,
+            to_state=new_status,
+            details={"target_type": target_type, "target_id": target_id, "reason": reason},
+        )
+    except Exception:
+        pass
 
     return jsonify({"override": record})
 
@@ -802,7 +1152,7 @@ def api_districts():
             "districts": [d.to_dict() for d in districts]
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/districts/<district_id>/flood-geojson", methods=["GET"])
@@ -823,7 +1173,7 @@ def api_district_settlements(district_id):
             "settlements": [s.to_dict() for s in settlements]
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/districts/<district_id>/roads", methods=["GET"])
@@ -878,7 +1228,7 @@ def api_district_roads(district_id):
 
         return jsonify({"roads": road_dicts, "count": len(road_dicts)})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/districts/<district_id>/roads/geojson", methods=["GET"])
@@ -947,7 +1297,7 @@ def api_district_roads_geojson(district_id):
             "features": features,
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/districts/<district_id>/bridges", methods=["GET"])
@@ -1003,7 +1353,7 @@ def api_district_bridges(district_id):
 
         return jsonify({"bridges": bridge_dicts, "count": len(bridge_dicts)})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/districts/<district_id>/medical-facilities", methods=["GET"])
@@ -1014,7 +1364,7 @@ def api_district_medical_facilities(district_id):
         facilities = get_repository().get_medical_facilities(district_id)
         return jsonify({"facilities": [f.to_dict() for f in facilities], "count": len(facilities)})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1034,10 +1384,11 @@ def api_list_needs():
         needs = repo.list_needs(district_id=district_id, status=status, urgency=urgency)
         return jsonify({"needs": [n.to_dict() for n in needs]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/needs", methods=["POST"])
+@require_auth
 def api_create_need():
     """Create a new shared need."""
     try:
@@ -1049,6 +1400,15 @@ def api_create_need():
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
+
+        # Input validation (production hardening): normalize and bound the
+        # client-supplied fields before they reach the domain layer.
+        try:
+            payload = {**payload, **validate_need_payload(payload)}
+            if payload.get("district_id"):
+                validate_id(payload["district_id"], "district_id")
+        except ValidationError as ve:
+            return jsonify({"error": str(ve), "code": "VALIDATION_ERROR"}), 400
 
         repo = get_repository()
         need_id = f"need_{str(uuid.uuid4())[:8]}"
@@ -1072,6 +1432,7 @@ def api_create_need():
 
         # Record activity
         from agent.data.models import ActivityEvent, Notification
+        from agent.agents.events import make_need_created_event, make_need_status_changed_event
         repo.append_activity_event(ActivityEvent(
             id=f"evt_{str(uuid.uuid4())[:8]}",
             entity_type="need",
@@ -1080,6 +1441,23 @@ def api_create_need():
             actor=payload.get("reporter_id", "anonymous"),
             detail=f"Need created: {need.title}",
         ))
+
+        # Emit machine-facing AgentEvent outbox record
+        repo.append_agent_event(make_need_created_event(
+            need_id=need_id,
+            district=need.district_id,
+            priority="critical" if need.urgency == "critical" else "urgent",
+            metadata={"title": need.title, "need_type": need.need_type, "urgency": need.urgency},
+        ))
+
+        # Audit: need creation is a consequential operational action.
+        record_audit_log(
+            repo,
+            action="create_need",
+            entity_type="need",
+            entity_id=need_id,
+            details={"title": need.title, "urgency": need.urgency, "district_id": need.district_id},
+        )
 
         # Emit notification for critical needs
         if need.urgency == "critical":
@@ -1096,7 +1474,7 @@ def api_create_need():
 
         return jsonify({"need": result.to_dict()}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/needs/<need_id>", methods=["GET"])
@@ -1110,16 +1488,18 @@ def api_get_need(need_id):
             return jsonify({"error": "Need not found"}), 404
         return jsonify({"need": need.to_dict()})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/needs/<need_id>", methods=["PATCH"])
+@require_auth
 def api_update_need(need_id):
     """Update a need (status, description, etc.)."""
     try:
         import uuid
         from agent.data.repository import get_repository
         from agent.data.models import ActivityEvent
+        from agent.agents.events import make_need_status_changed_event
         repo = get_repository()
         need = repo.get_need(need_id)
         if not need:
@@ -1128,6 +1508,21 @@ def api_update_need(need_id):
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
+
+        # Input validation (production hardening)
+        try:
+            if "status" in payload:
+                payload["status"] = validate_need_status(payload["status"], current_status=need.status)
+            if "urgency" in payload:
+                payload["urgency"] = validate_urgency(payload["urgency"])
+            if "title" in payload:
+                payload["title"] = sanitize_text(payload["title"], 512)
+            if "description" in payload:
+                payload["description"] = sanitize_text(payload["description"], 4000)
+            if "requested_resources" in payload:
+                payload = {**payload, **validate_need_payload({"requested_resources": payload["requested_resources"]})}
+        except ValidationError as ve:
+            return jsonify({"error": str(ve), "code": "VALIDATION_ERROR"}), 400
 
         # Update fields
         if "status" in payload:
@@ -1151,6 +1546,23 @@ def api_update_need(need_id):
                 actor=payload.get("actor", "coordinator"),
                 detail=f"Need status: {old_status} → {need.status}",
             ))
+            # Emit machine-facing AgentEvent outbox record
+            repo.append_agent_event(make_need_status_changed_event(
+                need_id=need_id,
+                old_status=old_status,
+                new_status=new_status,
+                district=need.district_id,
+            ))
+            record_audit_log(
+                repo,
+                action="update_need_status",
+                entity_type="need",
+                entity_id=need_id,
+                organization_id=None,
+                from_state=old_status,
+                to_state=new_status,
+                details={"title": need.title},
+            )
         if "title" in payload:
             need.title = payload["title"]
         if "description" in payload:
@@ -1164,7 +1576,7 @@ def api_update_need(need_id):
         repo.update_need(need)
         return jsonify({"need": need.to_dict()})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1196,10 +1608,11 @@ def api_list_offers():
         )
         return jsonify({"offers": [o.to_dict() for o in offers]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/offers", methods=["POST"])
+@require_org_role(UserRole.ORG_OPERATOR)
 def api_create_offer():
     """Publish a new resource offer.
 
@@ -1216,6 +1629,12 @@ def api_create_offer():
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
+
+        # Input validation (production hardening)
+        try:
+            payload = {**payload, **validate_offer_payload(payload)}
+        except ValidationError as ve:
+            return jsonify({"error": str(ve), "code": "VALIDATION_ERROR"}), 400
 
         organization_id = resolve_current_org(request)
         if not repo.get_organization(organization_id):
@@ -1242,6 +1661,7 @@ def api_create_offer():
         )
         result = repo.create_resource_offer(offer)
 
+        # Record activity
         repo.append_activity_event(ActivityEvent(
             id=f"evt_{str(uuid.uuid4())[:8]}",
             entity_type="resource_offer",
@@ -1251,30 +1671,78 @@ def api_create_offer():
             detail=f"Resource offer published: {offer.quantity} {offer.resource_type}",
         ))
 
+        # Emit machine-facing AgentEvent
+        from agent.agents.events import make_offer_created_event, make_offer_status_changed_event
+        repo.append_agent_event(make_offer_created_event(
+            offer_id=offer_id,
+            org_id=organization_id,
+            district=offer.district_id,
+            metadata={"resource_type": offer.resource_type, "quantity": offer.quantity},
+        ))
+
+        # Audit Log
+        record_audit_log(
+            repo,
+            action="publish_offer",
+            entity_type="offer",
+            entity_id=offer_id,
+            organization_id=organization_id,
+            to_state="OFFERED",
+            details={"resource_type": offer.resource_type, "quantity": offer.quantity, "district_id": offer.district_id},
+        )
+
         return jsonify({"offer": result.to_dict()}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/offers/<offer_id>", methods=["PATCH"])
+@require_org_role(UserRole.ORG_OPERATOR)
 def api_update_offer(offer_id):
     """Update a resource offer."""
     try:
         import uuid
         from agent.data.repository import get_repository
         from agent.data.models import ActivityEvent
+        from agent.agents.events import make_offer_status_changed_event
         from datetime import datetime, timezone
         repo = get_repository()
         offer = repo.get_resource_offer(offer_id)
         if not offer:
             return jsonify({"error": "Offer not found"}), 404
 
+        # Cross-org integrity: an authenticated user may only modify offers
+        # belonging to their own resolved org context (network operators
+        # excepted). 403 in enforced mode; dev/test keeps legacy behavior.
+        session_org = resolve_current_org(request)
+        principal = resolve_request_principal(request)
+        if offer.organization_id != session_org and not (
+            principal and principal.is_network_operator
+        ):
+            if is_auth_enforced():
+                logger.warning(
+                    "[RequestID: %s] authz denied: offer=%s belongs to %s, session org=%s",
+                    getattr(g, "request_id", "-"), offer_id, offer.organization_id, session_org,
+                )
+                return jsonify({"error": "Not authorized to modify this offer", "code": "FORBIDDEN"}), 403
+
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
 
+        # Input validation (production hardening)
+        try:
+            if "status" in payload:
+                payload["status"] = validate_offer_status(payload["status"])
+            if "quantity" in payload:
+                payload["quantity"] = validate_quantity(payload["quantity"])
+            if "notes" in payload:
+                payload["notes"] = sanitize_text(payload["notes"], 2000)
+        except ValidationError as ve:
+            return jsonify({"error": str(ve), "code": "VALIDATION_ERROR"}), 400
+
+        old_status = offer.status
         if "status" in payload:
-            old_status = offer.status
             offer.status = payload["status"]
             repo.append_activity_event(ActivityEvent(
                 id=f"evt_{str(uuid.uuid4())[:8]}",
@@ -1284,6 +1752,13 @@ def api_update_offer(offer_id):
                 actor=payload.get("actor", offer.organization_id),
                 detail=f"Offer status changed: {old_status} → {offer.status}",
             ))
+            repo.append_agent_event(make_offer_status_changed_event(
+                offer_id=offer_id,
+                old_status=old_status,
+                new_status=offer.status,
+                org_id=offer.organization_id,
+                district=offer.district_id,
+            ))
         if "quantity" in payload:
             offer.quantity = payload["quantity"]
         if "notes" in payload:
@@ -1291,9 +1766,22 @@ def api_update_offer(offer_id):
 
         offer.updated_at = datetime.now(timezone.utc)
         repo.update_resource_offer(offer)
+
+        # Audit log
+        record_audit_log(
+            repo,
+            action="update_offer",
+            entity_type="offer",
+            entity_id=offer_id,
+            organization_id=offer.organization_id,
+            from_state=old_status,
+            to_state=offer.status,
+            details={"updated_fields": list(payload.keys())},
+        )
+
         return jsonify({"offer": offer.to_dict()})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1316,16 +1804,18 @@ def api_list_operations():
         )
         return jsonify({"operations": [o.to_dict() for o in ops]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/operations", methods=["POST"])
+@require_auth
 def api_create_operation():
     """Create a new operation."""
     try:
         import uuid
         from agent.data.repository import get_repository
         from agent.data.models import Operation, ActivityEvent
+        from agent.agents.events import make_operation_created_event, make_operation_status_changed_event
         repo = get_repository()
 
         payload = request.get_json(force=True, silent=True)
@@ -1357,9 +1847,16 @@ def api_create_operation():
             detail=f"Operation created: {op.name}",
         ))
 
+        repo.append_agent_event(make_operation_created_event(
+            operation_id=op_id,
+            district=op.district_id,
+            org_id=op.lead_organization_id,
+            metadata={"name": op.name, "operation_type": op.operation_type},
+        ))
+
         return jsonify({"operation": result.to_dict()}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/operations/<op_id>", methods=["GET"])
@@ -1376,16 +1873,18 @@ def api_get_operation(op_id):
         result["participants"] = participants
         return jsonify({"operation": result})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/operations/<op_id>", methods=["PATCH"])
+@require_auth
 def api_update_operation(op_id):
     """Update an operation."""
     try:
         import uuid
         from agent.data.repository import get_repository
         from agent.data.models import ActivityEvent
+        from agent.agents.events import make_operation_status_changed_event
         from datetime import datetime, timezone
         repo = get_repository()
         op = repo.get_operation(op_id)
@@ -1416,6 +1915,23 @@ def api_update_operation(op_id):
                 actor=payload.get("actor", "coordinator"),
                 detail=f"Operation {op.name}: {old_status} → {new_status}",
             ))
+            repo.append_agent_event(make_operation_status_changed_event(
+                operation_id=op_id,
+                old_status=old_status,
+                new_status=new_status,
+                district=op.district_id,
+                org_id=op.lead_organization_id,
+            ))
+            record_audit_log(
+                repo,
+                action="update_operation_status",
+                entity_type="operation",
+                entity_id=op_id,
+                organization_id=op.lead_organization_id,
+                from_state=old_status,
+                to_state=new_status,
+                details={"name": op.name},
+            )
         if "name" in payload:
             op.name = payload["name"]
         if "description" in payload:
@@ -1425,7 +1941,7 @@ def api_update_operation(op_id):
         repo.update_operation(op)
         return jsonify({"operation": op.to_dict()})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1441,7 +1957,7 @@ def api_list_organizations():
         orgs = repo.list_organizations(active_only=True)
         return jsonify({"organizations": [o.to_dict() for o in orgs]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/organizations", methods=["POST"])
@@ -1469,7 +1985,7 @@ def api_create_organization():
         result = repo.create_organization(org)
         return jsonify({"organization": result.to_dict()}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/organizations/<org_id>", methods=["GET"])
@@ -1483,7 +1999,7 @@ def api_get_organization(org_id):
             return jsonify({"error": "Organization not found"}), 404
         return jsonify({"organization": org.to_dict()})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1510,7 +2026,7 @@ def api_get_session_org():
             "organizations": [o.to_dict() for o in orgs],
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/session/org", methods=["POST"])
@@ -1528,14 +2044,37 @@ def api_set_session_org():
         if not payload or not payload.get("org_id"):
             return jsonify({"error": "org_id required"}), 400
         org_id = str(payload["org_id"]).strip()
+        try:
+            validate_id(org_id, "org_id")
+        except ValidationError as ve:
+            return jsonify({"error": str(ve), "code": "VALIDATION_ERROR"}), 400
         repo = get_repository()
         org = repo.get_organization(org_id)
         if not org:
             return jsonify({"error": f"Organization not found: {org_id}"}), 404
+
+        # Fail closed: with authentication enforced, a user may only select
+        # an organization they hold a membership in (or any org if they are a
+        # NETWORK_OPERATOR). The cookie is a preference, not a credential.
+        principal = resolve_request_principal(request)
+        if is_auth_enforced():
+            # Unauthenticated org selection must fail closed — otherwise an
+            # anonymous caller could steer org-scoped traffic at any org.
+            if not principal:
+                return jsonify({"error": "Authentication required", "code": "UNAUTHORIZED"}), 401
+            if not (
+                principal.is_network_operator or principal.get_role_for_org(org_id)
+            ):
+                return jsonify({"error": "Not a member of this organization", "code": "FORBIDDEN"}), 403
+        elif principal and not (
+            principal.is_network_operator or principal.get_role_for_org(org_id)
+        ):
+            return jsonify({"error": "Not a member of this organization", "code": "FORBIDDEN"}), 403
+
         resp = jsonify({"org_id": org_id, "name": org.name})
         return set_current_org_cookie(resp, org_id)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1546,6 +2085,7 @@ def api_set_session_org():
 # ---------------------------------------------------------------------------
 
 @app.route("/api/my-org/summary", methods=["GET"])
+@require_org_role(UserRole.ORG_VIEWER)
 def api_org_summary():
     """Get organization workspace summary (private + public state) for the session org."""
     try:
@@ -1553,10 +2093,11 @@ def api_org_summary():
         result = get_org_summary(resolve_current_org(request))
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/resources", methods=["GET"])
+@require_org_role(UserRole.ORG_VIEWER)
 def api_org_list_resources():
     """List private resources for the session organization."""
     try:
@@ -1564,10 +2105,11 @@ def api_org_list_resources():
         resources = list_resources(resolve_current_org(request))
         return jsonify({"resources": resources})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/resources", methods=["POST"])
+@require_org_role(UserRole.ORG_OPERATOR)
 def api_org_add_resource():
     """Add a private resource to the session organization's inventory."""
     try:
@@ -1578,10 +2120,11 @@ def api_org_add_resource():
         resource = add_resource(resolve_current_org(request), payload)
         return jsonify({"resource": resource}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/resources/<resource_id>", methods=["PATCH"])
+@require_org_role(UserRole.ORG_OPERATOR)
 def api_org_update_resource(resource_id):
     """Update a private resource of the session organization."""
     try:
@@ -1594,10 +2137,11 @@ def api_org_update_resource(resource_id):
             return jsonify({"error": "Resource not found"}), 404
         return jsonify({"resource": result})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/resources/<resource_id>", methods=["DELETE"])
+@require_org_role(UserRole.ORG_OPERATOR)
 def api_org_delete_resource(resource_id):
     """Delete a private resource of the session organization."""
     try:
@@ -1607,10 +2151,11 @@ def api_org_delete_resource(resource_id):
             return jsonify({"error": "Resource not found"}), 404
         return jsonify({"message": "Resource deleted"})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/teams", methods=["GET"])
+@require_org_role(UserRole.ORG_VIEWER)
 def api_org_list_teams():
     """List private teams for the session organization."""
     try:
@@ -1618,10 +2163,11 @@ def api_org_list_teams():
         teams = list_teams(resolve_current_org(request))
         return jsonify({"teams": teams})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/teams", methods=["POST"])
+@require_org_role(UserRole.ORG_OPERATOR)
 def api_org_add_team():
     """Add a private team to the session organization."""
     try:
@@ -1632,10 +2178,11 @@ def api_org_add_team():
         team = add_team(resolve_current_org(request), payload)
         return jsonify({"team": team}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/teams/<team_id>", methods=["PATCH"])
+@require_org_role(UserRole.ORG_OPERATOR)
 def api_org_update_team(team_id):
     """Update a private team of the session organization."""
     try:
@@ -1648,10 +2195,11 @@ def api_org_update_team(team_id):
             return jsonify({"error": "Team not found"}), 404
         return jsonify({"team": result})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/missions", methods=["GET"])
+@require_org_role(UserRole.ORG_VIEWER)
 def api_org_list_missions():
     """List private missions for the session organization."""
     try:
@@ -1659,10 +2207,11 @@ def api_org_list_missions():
         missions = list_missions(resolve_current_org(request))
         return jsonify({"missions": missions})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/missions", methods=["POST"])
+@require_org_role(UserRole.ORG_OPERATOR)
 def api_org_add_mission():
     """Add a private mission to the session organization."""
     try:
@@ -1670,13 +2219,24 @@ def api_org_add_mission():
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
-        mission = add_mission(resolve_current_org(request), payload)
+        org_id = resolve_current_org(request)
+        mission = add_mission(org_id, payload)
+        record_audit_log(
+            get_repository(),
+            action="create_mission",
+            entity_type="mission",
+            entity_id=mission.get("id", ""),
+            organization_id=org_id,
+            to_state="ACTIVE",
+            details={"name": mission.get("name", "")},
+        )
         return jsonify({"mission": mission}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/missions/<mission_id>", methods=["PATCH"])
+@require_org_role(UserRole.ORG_OPERATOR)
 def api_org_update_mission(mission_id):
     """Update a private mission of the session organization."""
     try:
@@ -1684,15 +2244,26 @@ def api_org_update_mission(mission_id):
         payload = request.get_json(force=True, silent=True)
         if not payload:
             return jsonify({"error": "Invalid JSON body"}), 400
-        result = update_mission(resolve_current_org(request), mission_id, payload)
+        org_id = resolve_current_org(request)
+        result = update_mission(org_id, mission_id, payload)
         if not result:
             return jsonify({"error": "Mission not found"}), 404
+        record_audit_log(
+            get_repository(),
+            action="update_mission",
+            entity_type="mission",
+            entity_id=mission_id,
+            organization_id=org_id,
+            to_state=result.get("status"),
+            details={"updated_fields": list(payload.keys())},
+        )
         return jsonify({"mission": result})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/agent/analyze-need", methods=["POST"])
+@require_org_role(UserRole.ORG_VIEWER)
 def api_org_agent_analyze_need():
     """
     NGO Main Agent analyzes a network Need using the session org's private
@@ -1744,10 +2315,11 @@ def api_org_agent_analyze_need():
         
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/agent/situation", methods=["GET"])
+@require_org_role(UserRole.ORG_VIEWER)
 def api_org_agent_situation():
     """
     NGO Main Agent situation summary for the session organization.
@@ -1791,10 +2363,11 @@ def api_org_agent_situation():
         
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/publish-offer", methods=["POST"])
+@require_org_role(UserRole.ORG_OPERATOR)
 def api_org_publish_offer():
     """
     Publish a resource offer from the session org's private inventory to the
@@ -1857,10 +2430,30 @@ def api_org_publish_offer():
             actor=org_id,
             detail=f"Published offer: {offer.quantity} {offer.resource_type} from {org_id}",
         ))
-        
+
+        # Emit machine-facing AgentEvent
+        from agent.agents.events import make_offer_created_event
+        repo.append_agent_event(make_offer_created_event(
+            offer_id=offer_id,
+            org_id=org_id,
+            district=offer.district_id,
+            metadata={"resource_type": offer.resource_type, "quantity": offer.quantity},
+        ))
+
+        # Audit: publishing an offer is a consequential human action.
+        record_audit_log(
+            repo,
+            action="publish_offer",
+            entity_type="offer",
+            entity_id=offer_id,
+            organization_id=org_id,
+            to_state="OFFERED",
+            details={"resource_type": offer.resource_type, "quantity": offer.quantity},
+        )
+
         return jsonify({"offer": result.to_dict(), "message": "Offer published to network"}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1883,7 +2476,7 @@ def api_list_activity():
         )
         return jsonify({"events": [e.to_dict() for e in events]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1892,13 +2485,36 @@ def api_list_activity():
 
 @app.route("/api/notifications", methods=["GET"])
 def api_list_notifications():
-    """List notifications for an organization or network."""
+    """List notifications for the caller's own org context or the network view.
+
+    Authorization model: notifications are delivered to an organization (or
+    'network'). A caller may read the queue for its own resolved org context
+    (the identity seam), or the network broadcast queue. Requesting another
+    organization's queue requires NETWORK_OPERATOR privileges — a client-\
+    supplied recipient_id can never be used to read a different org's
+    notifications.
+    """
     try:
         from agent.data.repository import get_repository
         repo = get_repository()
-        recipient_id = request.args.get("recipient_id")
-        if not recipient_id:
-            recipient_id = resolve_current_org(request)
+        requested = (request.args.get("recipient_id") or "").strip()
+        own_org = resolve_current_org(request)
+        recipient_id = requested or own_org
+
+        if requested and requested != own_org:
+            principal = resolve_request_principal(request)
+            is_operator = bool(principal and principal.is_network_operator)
+            if requested == "network" and is_operator:
+                recipient_id = requested
+            elif is_auth_enforced():
+                logger.warning(
+                    "[RequestID: %s] authz denied: notifications recipient_id=%s requested (own org=%s)",
+                    getattr(g, "request_id", "-"), requested, own_org,
+                )
+                return jsonify({"error": "Not authorized to read this recipient's notifications", "code": "FORBIDDEN"}), 403
+            # Dev/test mode keeps the historical behavior so existing
+            # integration fixtures continue to work unchanged.
+
         unread_only = request.args.get("unread_only", "false").lower() == "true"
         limit = int(request.args.get("limit", 50))
         notifs = repo.list_notifications(
@@ -1908,19 +2524,49 @@ def api_list_notifications():
         )
         return jsonify({"notifications": [n.to_dict() for n in notifs]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/notifications/<notif_id>/read", methods=["POST"])
 def api_mark_notification_read(notif_id):
-    """Mark a notification as read."""
+    """Mark a notification as read (consequential — audited)."""
     try:
         from agent.data.repository import get_repository
         repo = get_repository()
-        repo.mark_notification_read(notif_id)
+        notification = repo.get_notification(notif_id)
+        if not notification:
+            return jsonify({"error": "Notification not found"}), 404
+
+        own_org = resolve_current_org(request)
+        recipient = notification.recipient_id
+        principal = resolve_request_principal(request)
+        allowed = recipient == "network" or recipient == own_org or bool(
+            principal and principal.is_network_operator
+        )
+        if not allowed:
+            if is_auth_enforced():
+                logger.warning(
+                    "[RequestID: %s] authz denied: mark-read notif=%s recipient=%s own_org=%s",
+                    getattr(g, "request_id", "-"), notif_id, recipient, own_org,
+                )
+                return jsonify({"error": "Not authorized to modify this notification", "code": "FORBIDDEN"}), 403
+            # Dev/test fallback preserves legacy behavior.
+
+        if not notification.read:
+            repo.mark_notification_read(notif_id)
+            record_audit_log(
+                repo,
+                action="mark_notification_read",
+                entity_type="notification",
+                entity_id=notif_id,
+                organization_id=own_org or None,
+                from_state="UNREAD",
+                to_state="READ",
+                details={"recipient_id": recipient, "notification_type": notification.notification_type},
+            )
         return jsonify({"success": True})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1975,10 +2621,11 @@ def api_need_matches(need_id):
             "total_offers_checked": len(offers),
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/matches/<need_id>/<offer_id>/confirm", methods=["POST"])
+@require_auth
 def api_confirm_match(need_id, offer_id):
     """
     Human confirms a proposed match → creates an Operation.
@@ -1990,6 +2637,7 @@ def api_confirm_match(need_id, offer_id):
         import uuid
         from agent.data.repository import get_repository
         from agent.data.models import Operation, ActivityEvent
+        from agent.agents.events import make_operation_created_event, make_need_status_changed_event
         from datetime import datetime, timezone
 
         repo = get_repository()
@@ -2077,12 +2725,39 @@ def api_confirm_match(need_id, offer_id):
             detail=f"Operation created: {op.name}",
         ))
 
+        # Emit machine-facing AgentEvents
+        repo.append_agent_event(make_operation_created_event(
+            operation_id=op_id,
+            district=op.district_id,
+            org_id=offer.organization_id,
+            metadata={"name": op.name, "collaboration": True},
+        ))
+        repo.append_agent_event(make_need_status_changed_event(
+            need_id=need_id,
+            old_status="OPEN",
+            new_status="RESPONDING",
+            district=need.district_id,
+        ))
+
+        # Audit: consequential human action (match confirmation creates a
+        # committed Operation between two organizations).
+        record_audit_log(
+            repo,
+            action="confirm_match",
+            entity_type="operation",
+            entity_id=op_id,
+            organization_id=offer.organization_id,
+            from_state=need.status,
+            to_state="RESPONDING",
+            details={"need_id": need_id, "offer_id": offer_id},
+        )
+
         return jsonify({
             "operation": result.to_dict(),
             "message": "Collaboration confirmed and Operation created",
         }), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 def _extract_offer_quantity(need, offer) -> int:
@@ -2130,7 +2805,7 @@ def api_planner():
             "allocation_plan": result.allocation_plan,
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -2154,7 +2829,7 @@ def api_ai_coordinator_analysis():
         result = run_coordinator_analysis()
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -2162,6 +2837,7 @@ def api_ai_coordinator_analysis():
 # ---------------------------------------------------------------------------
 
 @app.route("/api/network/coordination/propose", methods=["POST"])
+@require_network_operator
 def api_coordination_propose():
     """
     Create a coordination proposal for a Need.
@@ -2204,6 +2880,11 @@ def api_coordination_propose():
         
         # Record activity
         from agent.data.models import ActivityEvent, Notification
+        from agent.agents.events import (
+            make_coordination_proposal_created_event,
+            make_proposal_received_event,
+            make_coordination_proposal_updated_event,
+        )
         repo.append_activity_event(ActivityEvent(
             id=f"evt_{str(uuid.uuid4())[:8]}",
             entity_type="coordination",
@@ -2211,6 +2892,13 @@ def api_coordination_propose():
             event_type="coordination_proposed",
             actor="network_agent",
             detail=f"Coordination proposal created for Need {need.get('id', '')} → {org_name}",
+        ))
+
+        # Emit machine-facing AgentEvent
+        repo.append_agent_event(make_coordination_proposal_created_event(
+            proposal_id=proposal["id"],
+            org_id=org_id,
+            need_id=need.get("id", ""),
         ))
         
         # Emit notification for target NGO
@@ -2227,9 +2915,24 @@ def api_coordination_propose():
         
         # Return the sanitized public projection — never the raw proposal dict
         # (which carries org_evaluation/private_factors slots for the lifecycle).
+        record_audit_log(
+            repo,
+            action="create_coordination_proposal",
+            entity_type="proposal",
+            entity_id=proposal["id"],
+            organization_id=org_id,
+            to_state=proposal.get("status", "PROPOSED"),
+            details={"need_id": need.get("id", ""), "candidates": len(candidates)},
+        )
         return jsonify({"proposal": get_public_view(proposal), "candidates": candidates}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
+
+
+@app.route("/api/proposals", methods=["GET"])
+def api_list_proposals_legacy():
+    """Legacy alias: list coordination proposals (public projection)."""
+    return api_list_proposals()
 
 
 @app.route("/api/network/coordination/proposals", methods=["GET"])
@@ -2244,7 +2947,7 @@ def api_list_proposals():
         # Return public view only
         return jsonify({"proposals": [get_public_view(p) for p in proposals]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/network/coordination/proposals/<proposal_id>", methods=["GET"])
@@ -2257,10 +2960,11 @@ def api_get_proposal(proposal_id):
             return jsonify({"error": "Proposal not found"}), 404
         return jsonify({"proposal": get_public_view(proposal)})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/network/coordination/proposals/<proposal_id>/send-to-org", methods=["POST"])
+@require_network_operator
 def api_send_proposal_to_org(proposal_id):
     """Send proposal to NGO for evaluation.
 
@@ -2273,6 +2977,7 @@ def api_send_proposal_to_org(proposal_id):
         from agent.coordination.proposal import send_to_org, get_public_view
         from agent.data.repository import get_repository
         from agent.data.models import ActivityEvent, Notification
+        from agent.agents.events import make_proposal_received_event
 
         proposal = send_to_org(proposal_id)
         if not proposal:
@@ -2289,6 +2994,13 @@ def api_send_proposal_to_org(proposal_id):
             detail=f"Proposal {proposal['id']} sent to {proposal.get('organization_name', proposal.get('organization_id'))} for review",
         ))
 
+        # Emit machine-facing AgentEvent targeting the NGO Main Agent
+        repo.append_agent_event(make_proposal_received_event(
+            proposal_id=proposal["id"],
+            org_id=proposal["organization_id"],
+            need_id=proposal.get("need_id"),
+        ))
+
         # Targeted Notification to target NGO
         repo.create_notification(Notification(
             id=f"notif_{str(uuid.uuid4())[:8]}",
@@ -2301,12 +3013,23 @@ def api_send_proposal_to_org(proposal_id):
             metadata={"need_id": proposal.get("need_id"), "proposal_id": proposal["id"]},
         ))
 
+        record_audit_log(
+            repo,
+            action="send_proposal_to_org",
+            entity_type="proposal",
+            entity_id=proposal["id"],
+            organization_id=proposal.get("organization_id"),
+            from_state=proposal.get("status", "PROPOSED"),
+            to_state="SENT",
+            details={"need_id": proposal.get("need_id")},
+        )
         return jsonify({"proposal": get_public_view(proposal)})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/agent/evaluate-coordination", methods=["POST"])
+@require_org_role(UserRole.ORG_OPERATOR)
 def api_org_evaluate_coordination():
     """
     NGO Main Agent privately evaluates a coordination proposal for the
@@ -2320,6 +3043,7 @@ def api_org_evaluate_coordination():
         import uuid
         from agent.coordination.proposal import get_proposal, record_org_evaluation
         from agent.coordination.ngo_evaluation import evaluate_coordination
+        from agent.agents.events import make_coordination_proposal_updated_event
 
         payload = request.get_json(force=True, silent=True)
         if not payload or not payload.get("proposal_id"):
@@ -2365,6 +3089,14 @@ def api_org_evaluate_coordination():
             actor=org_id,
             detail=f"Organization {org_id} evaluated proposal: {evaluation.get('decision', '')}",
         ))
+
+        # Emit machine-facing AgentEvent
+        repo.append_agent_event(make_coordination_proposal_updated_event(
+            proposal_id=proposal["id"],
+            org_id=org_id,
+            need_id=proposal.get("need_id"),
+            metadata={"decision": public_eval.get("decision")},
+        ))
         
         # Notification for org coordinators that recommendation is ready for human approval
         repo.create_notification(Notification(
@@ -2377,13 +3109,23 @@ def api_org_evaluate_coordination():
             entity_id=proposal["id"],
             metadata={"proposal_id": proposal["id"], "decision": public_eval.get("decision")},
         ))
-        
+
+        record_audit_log(
+            repo,
+            action="evaluate_coordination",
+            entity_type="proposal",
+            entity_id=proposal["id"],
+            organization_id=org_id,
+            to_state=str(public_eval.get("decision", "")),
+            details={"decision": public_eval.get("decision")},
+        )
         return jsonify({"evaluation": public_eval, "proposal_id": proposal["id"]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/my-org/agent/approve-publication", methods=["POST"])
+@require_org_role(UserRole.ORG_ADMIN)
 def api_org_approve_publication():
     """
     Human-approved publication of proposed response for the session org.
@@ -2398,6 +3140,7 @@ def api_org_approve_publication():
         from agent.coordination.publication import create_public_offer_from_proposal
         from agent.data.repository import get_repository
         from agent.data.models import ActivityEvent, Notification
+        from agent.agents.events import make_coordination_proposal_updated_event
 
         payload = request.get_json(force=True, silent=True)
         if not payload or not payload.get("proposal_id"):
@@ -2445,6 +3188,14 @@ def api_org_approve_publication():
                 actor=org_id,
                 detail=f"Proposal {proposal['id']} confirmed; offer {offer_id} published to network",
             ))
+
+            # Emit machine-facing AgentEvent
+            repo.append_agent_event(make_coordination_proposal_updated_event(
+                proposal_id=proposal["id"],
+                org_id=org_id,
+                need_id=proposal.get("need_id"),
+                metadata={"action": "approved", "offer_id": offer_id},
+            ))
             
             # Broadcast Notification to Network
             repo.create_notification(Notification(
@@ -2457,13 +3208,26 @@ def api_org_approve_publication():
                 entity_id=proposal["id"],
                 metadata={"proposal_id": proposal["id"], "offer_id": offer_id},
             ))
+
+            # Audit Log
+            record_audit_log(
+                repo,
+                action="approve_proposal",
+                entity_type="proposal",
+                entity_id=proposal["id"],
+                organization_id=org_id,
+                from_state=proposal.get("status", "EVALUATED"),
+                to_state="CONFIRMED",
+                details={"offer_id": offer_id, "need_id": proposal.get("need_id")},
+            )
         
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/network/coordination/proposals/<proposal_id>/decline", methods=["POST"])
+@require_network_operator
 def api_decline_proposal(proposal_id):
     """Decline a coordination proposal.
 
@@ -2474,6 +3238,7 @@ def api_decline_proposal(proposal_id):
         from agent.coordination.proposal import decline_proposal, get_public_view
         from agent.data.repository import get_repository
         from agent.data.models import ActivityEvent, Notification
+        from agent.agents.events import make_coordination_proposal_updated_event
 
         proposal = decline_proposal(proposal_id)
         if not proposal:
@@ -2489,6 +3254,26 @@ def api_decline_proposal(proposal_id):
             detail=f"Proposal {proposal['id']} was declined",
         ))
 
+        # Emit machine-facing AgentEvent
+        repo.append_agent_event(make_coordination_proposal_updated_event(
+            proposal_id=proposal["id"],
+            org_id=proposal.get("organization_id"),
+            need_id=proposal.get("need_id"),
+            metadata={"action": "declined"},
+        ))
+
+        # Audit Log
+        record_audit_log(
+            repo,
+            action="decline_proposal",
+            entity_type="proposal",
+            entity_id=proposal["id"],
+            organization_id=proposal.get("organization_id"),
+            from_state="PROPOSED",
+            to_state="DECLINED",
+            details={"need_id": proposal.get("need_id")},
+        )
+
         repo.create_notification(Notification(
             id=f"notif_{str(uuid.uuid4())[:8]}",
             recipient_id="network",
@@ -2502,7 +3287,222 @@ def api_decline_proposal(proposal_id):
 
         return jsonify({"proposal": get_public_view(proposal)})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
+
+
+# ---------------------------------------------------------------------------
+# Agent Events & Dispatch endpoints (Phase 2A)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/agent/events", methods=["GET"])
+@require_auth
+def api_list_agent_events():
+    """List agent events from the persistent outbox."""
+    try:
+        from agent.data.repository import get_repository
+        repo = get_repository()
+        status = request.args.get("status")
+        entity_type = request.args.get("entity_type")
+        limit = int(request.args.get("limit", 50))
+        events = repo.list_agent_events(status=status, entity_type=entity_type, limit=limit)
+        return jsonify({"events": [e.to_dict() for e in events]})
+    except Exception as e:
+        return _api_error(e)
+
+
+@app.route("/api/agent/events/<event_id>", methods=["GET"])
+@require_auth
+def api_get_agent_event(event_id):
+    """Get a specific agent event by ID."""
+    try:
+        from agent.data.repository import get_repository
+        repo = get_repository()
+        event = repo.get_agent_event(event_id)
+        if not event:
+            return jsonify({"error": "Event not found"}), 404
+        return jsonify({"event": event.to_dict()})
+    except Exception as e:
+        return _api_error(e)
+
+
+@app.route("/api/agent/events/process", methods=["POST"])
+@require_auth
+def api_process_agent_events():
+    """Trigger processing of pending events from the outbox."""
+    try:
+        from agent.data.repository import get_repository
+        from agent.agents.event_router import EventDispatcher
+        repo = get_repository()
+        payload = request.get_json(force=True, silent=True) or {}
+        event_id = payload.get("event_id")
+        limit = int(payload.get("limit", 10))
+        dispatcher = EventDispatcher()
+        if event_id:
+            event = repo.get_agent_event(event_id)
+            if event:
+                res = dispatcher.dispatch_event(event, repo=repo)
+                return jsonify({"processed_count": 1, "results": [res]})
+            return jsonify({"processed_count": 0, "results": []})
+        results = dispatcher.process_pending_events(repo=repo, limit=limit)
+        return jsonify({"processed_count": len(results), "results": results})
+    except Exception as e:
+        return _api_error(e)
+
+
+@app.route("/api/agent/events/<event_id>/replay", methods=["POST"])
+@require_auth
+def api_replay_agent_event(event_id):
+    """Replay an event in read-only advisory mode for observability."""
+    try:
+        from agent.data.repository import get_repository
+        from agent.agents.event_router import EventDispatcher
+        repo = get_repository()
+        dispatcher = EventDispatcher()
+        result = dispatcher.replay_event(event_id, repo=repo)
+        return jsonify(result)
+    except Exception as e:
+        return _api_error(e)
+
+
+# ---------------------------------------------------------------------------
+# Proactive Intelligence endpoints (Phase 2B)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/agent/proactive/scans", methods=["GET"])
+@require_auth
+def api_list_proactive_scans():
+    """List proactive inspection scans."""
+    try:
+        from agent.data.repository import get_repository
+        repo = get_repository()
+        status = request.args.get("status")
+        trigger = request.args.get("trigger")
+        limit = int(request.args.get("limit", 50))
+        scans = repo.list_proactive_scans(status=status, trigger=trigger, limit=limit)
+        return jsonify({"scans": [s.to_dict() for s in scans]})
+    except Exception as e:
+        return _api_error(e)
+
+
+@app.route("/api/agent/proactive/scans/<scan_id>", methods=["GET"])
+@require_auth
+def api_get_proactive_scan(scan_id):
+    """Get a specific proactive scan by ID."""
+    try:
+        from agent.data.repository import get_repository
+        repo = get_repository()
+        scan = repo.get_proactive_scan(scan_id)
+        if not scan:
+            return jsonify({"error": "Proactive scan not found"}), 404
+        return jsonify({"scan": scan.to_dict()})
+    except Exception as e:
+        return _api_error(e)
+
+
+@app.route("/api/agent/proactive/findings", methods=["GET"])
+@require_auth
+def api_list_proactive_findings():
+    """List stateful proactive findings."""
+    try:
+        from agent.data.repository import get_repository
+        repo = get_repository()
+        status = request.args.get("status")
+        domain = request.args.get("domain")
+        severity = request.args.get("severity")
+        scan_id = request.args.get("scan_id")
+        limit = int(request.args.get("limit", 100))
+        findings = repo.list_proactive_findings(
+            status=status, domain=domain, severity=severity, scan_id=scan_id, limit=limit
+        )
+        return jsonify({"findings": [f.to_dict() for f in findings]})
+    except Exception as e:
+        return _api_error(e)
+
+
+@app.route("/api/agent/proactive/findings/<finding_id>", methods=["GET"])
+@require_auth
+def api_get_proactive_finding(finding_id):
+    """Get a specific proactive finding by ID."""
+    try:
+        from agent.data.repository import get_repository
+        repo = get_repository()
+        finding = repo.get_proactive_finding(finding_id)
+        if not finding:
+            return jsonify({"error": "Proactive finding not found"}), 404
+        return jsonify({"finding": finding.to_dict()})
+    except Exception as e:
+        return _api_error(e)
+
+
+@app.route("/api/agent/proactive/trigger", methods=["POST"])
+@require_auth
+def api_trigger_proactive_scan():
+    """Trigger an immediate proactive scan cycle."""
+    try:
+        from agent.data.repository import get_repository
+        from agent.proactive.runtime import ProactiveRuntime
+        repo = get_repository()
+        payload = request.get_json(force=True, silent=True) or {}
+        scope = payload.get("scope")
+        runtime = ProactiveRuntime(repo=repo)
+        scan = runtime.run_once(scope=scope, repo=repo, trigger="manual_api")
+        return jsonify({"scan": scan.to_dict()})
+    except Exception as e:
+        return _api_error(e)
+
+
+@app.route("/api/agent/proactive/status", methods=["GET"])
+@require_auth
+def api_get_proactive_status():
+    """Get status of proactive scheduler and runtime."""
+    try:
+        from agent.proactive.scheduler import get_proactive_scheduler
+        from agent.proactive.detectors.registry import list_detectors
+        scheduler = get_proactive_scheduler()
+        detectors = list_detectors()
+        return jsonify({
+            "scheduler": scheduler.get_status(),
+            "registered_detectors": [
+                {
+                    "detector_id": d.detector_id,
+                    "domain": d.domain,
+                    "description": d.description,
+                    "relevant_specialists": d.relevant_specialists,
+                }
+                for d in detectors
+            ],
+        })
+    except Exception as e:
+        return _api_error(e)
+
+
+@app.route("/api/agent/proactive/scheduler/start", methods=["POST"])
+@require_network_operator
+def api_start_proactive_scheduler():
+    """Start the background proactive scheduler."""
+    try:
+        from agent.proactive.scheduler import get_proactive_scheduler
+        payload = request.get_json(force=True, silent=True) or {}
+        interval = payload.get("interval_seconds")
+        scheduler = get_proactive_scheduler()
+        scheduler.start(interval_seconds=interval)
+        return jsonify({"status": "started", "scheduler": scheduler.get_status()})
+    except Exception as e:
+        return _api_error(e)
+
+
+@app.route("/api/agent/proactive/scheduler/stop", methods=["POST"])
+@require_network_operator
+def api_stop_proactive_scheduler():
+    """Stop the background proactive scheduler."""
+    try:
+        from agent.proactive.scheduler import get_proactive_scheduler
+        scheduler = get_proactive_scheduler()
+        scheduler.stop()
+        return jsonify({"status": "stopped", "scheduler": scheduler.get_status()})
+    except Exception as e:
+        return _api_error(e)
+
 
 
 # ---------------------------------------------------------------------------
@@ -2522,7 +3522,7 @@ def api_network_agent_analyze():
         result = run_network_analysis()
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/network/agent/analyze-need", methods=["POST"])
@@ -2543,7 +3543,7 @@ def api_network_agent_analyze_need():
         result = analyze_need_in_network(payload["need"])
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/network/agent/situation", methods=["GET"])
@@ -2567,7 +3567,7 @@ def api_network_agent_situation():
             "recommended_actions": result.get("recommended_actions"),
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -2591,7 +3591,7 @@ def api_delta():
         result = compute_delta(get_repository(), lookback_hours=hours)
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/evidence/<entity_type>/<entity_id>", methods=["GET"])
@@ -2608,7 +3608,7 @@ def api_evidence(entity_type, entity_id):
         result = synthesize_evidence(entity_type, entity_id)
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -2643,7 +3643,7 @@ def api_flood_snapshots():
             ]
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 @app.route("/api/flood-snapshots/<snapshot_id>/geojson", methods=["GET"])
@@ -2659,7 +3659,7 @@ def api_flood_snapshot_geojson(snapshot_id):
             return jsonify(snapshot.geometry_geojson)
         return jsonify({"type": "FeatureCollection", "features": []})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _api_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -2693,6 +3693,29 @@ register_building_routes(app)
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _log_startup_banner():
+    db_url = os.environ.get("DATABASE_URL", "").strip()
+    if db_url:
+        # Mask credentials for clean logging
+        masked_url = db_url
+        if "@" in db_url and "://" in db_url:
+            proto, rest = db_url.split("://", 1)
+            creds, host = rest.split("@", 1)
+            user = creds.split(":", 1)[0]
+            masked_url = f"{proto}://{user}:***@{host}"
+        print(f"[DATABASE] Connected via DATABASE_URL: {masked_url}")
+    else:
+        print("=" * 72)
+        print("[WARNING] DATABASE_URL is not set!")
+        print("ReliefOS is running with InMemoryRepository fallback.")
+        print("Most multi-district data (Jorhat, Golaghat, Charaideo flood extents,")
+        print("persistent coordination proposals, etc.) will NOT be available.")
+        print("To connect to PostgreSQL, configure DATABASE_URL in .env or run start_backend.bat:")
+        print("  DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos")
+        print("=" * 72)
+
+
 if __name__ == "__main__":
+    _log_startup_banner()
     print("Starting ReliefOS API on http://localhost:5001")
     app.run(host="0.0.0.0", port=5001, debug=True)

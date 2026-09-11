@@ -1,12 +1,17 @@
 """
 NGO Main Agent — Organization Operational Intelligence
 
-Phase 7F: The NGO Main Agent represents an organization's operational intelligence.
+Phase 1 Agent Runtime: The NGO Main Agent represents an organization's operational intelligence.
 It reasons over PRIVATE organizational state + SHARED network state.
 
 Architecture:
     PrivateOrganizationContext + SharedNetworkContext
         → NGO Main Agent
+            ├── NGOInventoryAgent
+            ├── NGOTeamAgent
+            ├── NGOMissionAgent
+            ├── NGOLogisticsAgent
+            └── NGOFieldAgent
         → Recommendation / Explanation / Proposed Publication
 
 Design principles:
@@ -15,14 +20,24 @@ Design principles:
 - Human-in-the-loop: AI proposes, human approves
 - LLM fallback: deterministic analysis when LLM unavailable
 - Auditability: record operational rationale, not chain-of-thought
+- Error isolation: specialist failure does not crash analysis
 """
 
 from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
+from agent.agents.base import AgentFinding, FindingProvenance, FindingSeverity
+from agent.agents.events import AgentEvent, AgentEventType
+from agent.agents.ngo_workers import (
+    NGOFieldAgent,
+    NGOInventoryAgent,
+    NGOLogisticsAgent,
+    NGOMissionAgent,
+    NGOTeamAgent,
+)
 from agent.matching_core import compare_need_resource
 from agent.reasoning.need_offer_judgment import judge_need_offer
 
@@ -143,10 +158,133 @@ class NGOMainAgent:
     It reasons over private organizational state + shared network state
     to produce recommendations that require human approval.
     """
+    domain: str = "ngo"
+    allowed_context: list[str] = ["org_private_state", "shared_state"]
+    allowed_tools: list[str] = ["matching_core", "road_status_tool", "field_intelligence_tool"]
+    accepted_event_types: list[str] = [
+        AgentEventType.NEED_CREATED.value,
+        AgentEventType.COORDINATION_PROPOSAL_RECEIVED.value,
+        AgentEventType.OPERATION_CREATED.value,
+        AgentEventType.OPERATION_STATUS_CHANGED.value,
+        AgentEventType.ROAD_OVERRIDE_APPLIED.value,
+        AgentEventType.BRIDGE_OVERRIDE_APPLIED.value,
+        AgentEventType.FIELD_REPORT_CREATED.value,
+    ]
 
     def __init__(self, org_id: str):
         self.org_id = org_id
+        self.agent_id = f"ngo_main_agent_{org_id}"
         self.audit_log = []
+
+        # Explicit NGO Specialist Agents
+        self.inventory_agent = NGOInventoryAgent(org_id)
+        self.team_agent = NGOTeamAgent(org_id)
+        self.mission_agent = NGOMissionAgent(org_id)
+        self.logistics_agent = NGOLogisticsAgent(org_id)
+        self.field_agent = NGOFieldAgent(org_id)
+
+        self._specialist_map = {
+            "inventory": self.inventory_agent,
+            "team": self.team_agent,
+            "mission": self.mission_agent,
+            "logistics": self.logistics_agent,
+            "field": self.field_agent,
+        }
+
+    def handle_event(
+        self,
+        event: AgentEvent,
+        private_ctx: PrivateOrganizationContext,
+        shared_ctx: SharedNetworkContext,
+    ) -> dict[str, Any]:
+        """
+        Process a machine-facing AgentEvent through deterministic NGO specialist delegation.
+
+        Flow:
+            AgentEvent
+               ↓
+            Determine relevant NGO specialists
+               ↓
+            Invoke specialists with failure isolation
+               ↓
+            Collect typed AgentFindings (Private to Org)
+               ↓
+            Synthesis & Private Recommendation
+        """
+        t_start = time.time()
+
+        from agent.agents.event_router import EventRouter
+        relevant_domains = EventRouter.route_ngo_event(event)
+
+        collected_findings: list[AgentFinding] = []
+        data_gaps: list[dict[str, Any]] = []
+        worker_statuses: dict[str, str] = {}
+
+        for domain in relevant_domains:
+            specialist = self._specialist_map.get(domain)
+            if not specialist:
+                continue
+
+            try:
+                if domain in ("inventory", "team", "mission", "field"):
+                    findings = specialist.handle_event(event, private_ctx)
+                elif domain == "logistics":
+                    findings = specialist.handle_event(event, shared_ctx)
+                else:
+                    findings = specialist.analyze(private_ctx)
+
+                collected_findings.extend(findings)
+                worker_statuses[domain] = "success"
+            except Exception as e:
+                worker_statuses[domain] = "failed"
+                gap = {
+                    "item": f"NGO specialist failure: {domain}",
+                    "detail": f"Specialist '{domain}' failed during event handling: {str(e)}",
+                }
+                data_gaps.append(gap)
+                collected_findings.append(
+                    AgentFinding(
+                        agent_id=f"ngo_specialist_{domain}_{self.org_id}",
+                        domain=domain,
+                        finding_type="data_gap",
+                        summary=f"Worker {domain} failed to process event: {str(e)}",
+                        severity=FindingSeverity.INFORMATION.value,
+                        confidence=1.0,
+                        provenance=FindingProvenance.UNKNOWN,
+                        data_gaps=[gap],
+                    )
+                )
+
+        severity_counts = {"critical": 0, "urgent": 0, "information": 0, "stable": 0}
+        for f in collected_findings:
+            sev = f.severity if isinstance(f.severity, str) else f.severity.value
+            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
+        elapsed_ms = round((time.time() - t_start) * 1000, 1)
+
+        result = {
+            "orchestrator": self.agent_id,
+            "org_id": self.org_id,
+            "event_id": event.event_id,
+            "event_type": event.event_type if isinstance(event.event_type, str) else event.event_type.value,
+            "entity_type": event.entity_type,
+            "entity_id": event.entity_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "selected_specialists": relevant_domains,
+            "worker_statuses": worker_statuses,
+            "findings": [f.to_dict() for f in collected_findings],
+            "severity_summary": severity_counts,
+            "data_gaps": data_gaps,
+            "processing_time_ms": elapsed_ms,
+        }
+
+        self._audit("handle_event", {
+            "event_id": event.event_id,
+            "event_type": result["event_type"],
+            "findings_count": len(collected_findings),
+        })
+
+        return result
 
     def analyze_need(
         self,
@@ -157,16 +295,11 @@ class NGOMainAgent:
         """
         Analyze a specific network Need using private organizational context.
 
-        Returns:
-            {
-                "recommendation": str,
-                "why": str,
-                "evidence": {...},
-                "private_factors": [...],
-                "uncertainty": [...],
-                "proposed_publication": {...} | None,
-                "action_required": str,
-            }
+        Delegates domain evaluations to explicit specialist agents:
+        - NGOInventoryAgent
+        - NGOTeamAgent
+        - NGOMissionAgent
+        - NGOLogisticsAgent
         """
         t_start = time.time()
 
@@ -182,41 +315,15 @@ class NGOMainAgent:
             if isinstance(qty, (int, float)):
                 requested_qty += int(qty)
 
-        # --- Inventory Worker analysis ---
-        available_resources = private_ctx.get_available_resources(need_type)
-        total_available = sum(r.get("quantity", 0) for r in available_resources)
+        # --- Inventory Specialist analysis ---
+        inv_eval = self.inventory_agent.evaluate_resource_availability(need_type, requested, private_ctx)
+        available_resources = inv_eval["available_resources"]
+        total_available = inv_eval["total_available"]
         committed = private_ctx.get_committed_resources()
-
-        # Deterministic facts are kept separate from the advisory interpretation.
-        resource_facts = [
-            compare_need_resource(
-                requested,
-                r.get("type", r.get("resource_type", "")),
-                r.get("quantity", 0),
-                r.get("unit"),
-                need_type,
-            )
-            for r in available_resources
-        ]
-        if resource_facts:
-            first_facts = resource_facts[0]
-            requested_quantity = first_facts.requested_quantity
-            unit_match = all(f.unit_match for f in resource_facts)
-            type_match = all(f.type_match for f in resource_facts)
-        else:
-            empty_facts = compare_need_resource(requested, need_type, 0, None, need_type)
-            requested_quantity = empty_facts.requested_quantity
-            unit_match = empty_facts.unit_match
-            type_match = empty_facts.type_match
-
-        if not type_match or not unit_match:
-            sufficiency = "insufficient"
-        elif requested_quantity is None:
-            sufficiency = "unknown"
-        elif total_available >= requested_quantity:
-            sufficiency = "sufficient"
-        else:
-            sufficiency = "insufficient"
+        requested_quantity = inv_eval["requested_quantity"]
+        unit_match = inv_eval["unit_match"]
+        type_match = inv_eval["type_match"]
+        sufficiency = inv_eval["sufficiency"]
 
         matching_facts = {
             "available_quantity": total_available,
@@ -233,17 +340,17 @@ class NGOMainAgent:
             description=need.get("description", ""),
         )
 
-        # --- Team Worker analysis ---
-        available_teams = private_ctx.get_available_teams()
+        # --- Team Specialist analysis ---
+        team_eval = self.team_agent.evaluate_team_readiness(private_ctx)
+        available_teams = team_eval["available_teams"]
 
-        # --- Mission Worker analysis ---
+        # --- Mission Specialist analysis ---
         active_missions = private_ctx.get_active_missions()
-        conflict, conflict_reason = private_ctx.has_resource_conflict(need_type, min(requested_qty, 1))
+        conflict, conflict_reason = self.mission_agent.evaluate_mission_conflicts(need_type, min(requested_qty, 1), private_ctx)
 
-        # --- Logistics Worker analysis ---
-        # Check if any overrides affect access
-        relevant_overrides = [o for o in shared_ctx.relevant_overrides
-                            if o.get("target_type") == "road"]
+        # --- Logistics Specialist analysis ---
+        logistics_eval = self.logistics_agent.evaluate_access(shared_ctx)
+        relevant_overrides = logistics_eval["blocked_details"]
 
         # --- Synthesize recommendation ---
         recommendation = ""
@@ -290,7 +397,6 @@ class NGOMainAgent:
             why = f"{total_available} {need_type}(s) available but no team for deployment."
             uncertainty.append("Team availability last checked at agent initialization")
 
-        # Add general uncertainties
         if relevant_overrides:
             uncertainty.append(f"{len(relevant_overrides)} active road overrides may affect access")
 
@@ -340,16 +446,7 @@ class NGOMainAgent:
     ) -> dict:
         """
         Get a summary of the organization's current situation.
-
-        Returns:
-            {
-                "private_summary": {...},
-                "network_summary": {...},
-                "attention": [...],
-                "recommendations": [...],
-            }
         """
-        # Private summary
         available_resources = private_ctx.get_available_resources()
         committed_resources = private_ctx.get_committed_resources()
         available_teams = private_ctx.get_available_teams()
@@ -364,17 +461,14 @@ class NGOMainAgent:
             "active_missions": len(active_missions),
         }
 
-        # Network summary
         network_summary = {
             "open_needs": len(shared_ctx.open_needs),
             "active_operations": len(shared_ctx.active_operations),
             "published_offers": len(shared_ctx.published_offers),
         }
 
-        # Attention items
         attention = []
 
-        # Proactive: unused available resources
         if available_resources:
             resource_types = set(r.get("type", r.get("resource_type", "")) for r in available_resources)
             for rt in resource_types:
@@ -386,7 +480,6 @@ class NGOMainAgent:
                         "severity": "information",
                     })
 
-        # Conflicting commitments
         if committed_resources and active_missions:
             attention.append({
                 "type": "status",
@@ -394,7 +487,6 @@ class NGOMainAgent:
                 "severity": "stable",
             })
 
-        # Team availability
         if available_teams and not active_missions:
             attention.append({
                 "type": "status",
@@ -421,7 +513,7 @@ class NGOMainAgent:
 
 
 # ---------------------------------------------------------------------------
-# Convenience function
+# Convenience functions
 # ---------------------------------------------------------------------------
 
 def analyze_need_for_org(
@@ -436,8 +528,6 @@ def analyze_need_for_org(
 ) -> dict:
     """
     Convenience function to analyze a need for an organization.
-
-    This is the main entry point called by the API.
     """
     private_ctx = PrivateOrganizationContext(
         org_id=org_id,

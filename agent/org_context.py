@@ -65,21 +65,14 @@ COOKIE_MAX_AGE_SECONDS = 30 * 24 * 3600
 def resolve_current_org(req) -> str:
     """Resolve the organization context for a request.
 
-    THIS IS IDENTITY / CONTEXT ONLY — NOT AUTHENTICATION.
-
-    Anyone can select any organization (the cookie is an unsigned,
-    client-visible preference and is trivially forged), there is no
-    password or credential anywhere in this flow, and this is NOT safe
-    for a multi-tenant public deployment as-is. Real authentication is
-    deliberately deferred to a specific future deployment's needs.
-
-    This function is the single authority for "which organization is
-    this": every org-scoped endpoint derives its org here instead of
-    trusting an org id from the URL path, query string, or request body.
-
     Resolution order:
-      1. The `reliefos_org_id` cookie (set by POST /api/session/org).
-      2. DEFAULT_ORG_ID (cookieless callers: tools, curl, tests).
+      1. If an authenticated principal exists:
+         a. If a valid `reliefos_org_id` cookie is present and the user has access
+            to it (or is a NETWORK_OPERATOR), use that org.
+         b. Otherwise, default to the user's primary/first organization membership.
+      2. If no authenticated principal (or in dev/test mode):
+         a. The `reliefos_org_id` cookie (set by POST /api/session/org).
+         b. DEFAULT_ORG_ID ("org_demo") for cookieless callers.
 
     Args:
         req: Flask request object.
@@ -87,9 +80,52 @@ def resolve_current_org(req) -> str:
     Returns:
         The organization id string for this request's org context.
     """
-    org_id = (req.cookies.get(SESSION_COOKIE_NAME) or "").strip()
-    if org_id:
-        return org_id
+    from agent.auth.decorators import is_auth_enforced
+
+    cookie_org = (req.cookies.get(SESSION_COOKIE_NAME) or "").strip()
+
+    principal = None
+    try:
+        from flask import g
+        principal = getattr(g, "principal", None)
+        if principal is None:
+            from agent.auth.decorators import resolve_request_principal
+            principal = resolve_request_principal(req)
+    except RuntimeError:
+        # No Flask request/app context (unit tests, diagnostic tools) — the
+        # cookie seam still works below, exactly as before hardening.
+        principal = None
+    except Exception:
+        # Token/service failure must NOT silently fall back to demo mode when
+        # auth is enforced. Resolve enforcement outside the try so a broken
+        # resolver can only widen access in development, never in production.
+        principal = None
+        if is_auth_enforced():
+            raise
+
+    if principal:
+        if cookie_org and (principal.is_network_operator or principal.get_role_for_org(cookie_org)):
+            return cookie_org
+        if principal.memberships:
+            return principal.memberships[0].organization_id
+        # Authenticated user with no matching membership for the cookie and
+        # no memberships at all: the cookie alone must never select an org
+        # the identity has no relationship with. In enforced mode this fails
+        # closed (empty context); dev/test keeps the lenient behavior.
+        if cookie_org and not is_auth_enforced():
+            return cookie_org
+        if is_auth_enforced():
+            return ""
+
+    if cookie_org:
+        return cookie_org
+
+    # Fail closed: in enforced (production) mode an unauthenticated request
+    # must never resolve to the demo organization. Public endpoints that
+    # need no org context simply get an empty one.
+    if is_auth_enforced():
+        return ""
+
     return DEFAULT_ORG_ID
 
 

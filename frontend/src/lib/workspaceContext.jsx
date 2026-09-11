@@ -95,6 +95,13 @@ const initialState = {
   searchQuery: "",
   searchResults: [],
 
+  // Pinpoint on map mode (Osiris / World Monitor coordinate picker)
+  pinpointMode: {
+    active: false,
+    formType: null,
+    coords: null,
+  },
+
   // Loading states
   loading: {
     flood: false,
@@ -139,8 +146,27 @@ function workspaceReducer(state, action) {
       if (state.filters[action.payload.key] === action.payload.value) {
         return state;
       }
+      let mapCenter = state.mapCenter;
+      let mapZoom = state.mapZoom;
+      if (action.payload.key === "district") {
+        const districtCenters = {
+          sivasagar: [26.98, 94.63],
+          jorhat: [26.75, 94.22],
+          golaghat: [26.52, 93.97],
+          charaideo: [27.02, 94.85],
+        };
+        if (action.payload.value && districtCenters[action.payload.value]) {
+          mapCenter = districtCenters[action.payload.value];
+          mapZoom = 12;
+        } else if (!action.payload.value) {
+          mapCenter = [26.85, 94.35];
+          mapZoom = 10;
+        }
+      }
       return {
         ...state,
+        mapCenter,
+        mapZoom,
         filters: { ...state.filters, [action.payload.key]: action.payload.value },
       };
     }
@@ -281,6 +307,49 @@ function workspaceReducer(state, action) {
 
     case "SET_SEARCH_RESULTS":
       return { ...state, searchResults: action.payload };
+
+    case "START_PINPOINT":
+      return {
+        ...state,
+        pinpointMode: {
+          active: true,
+          formType: action.payload?.formType || null,
+          coords: state.pinpointMode?.coords || null,
+        },
+      };
+
+    case "SET_PINPOINT_COORDS":
+      return {
+        ...state,
+        pinpointMode: {
+          active: false,
+          formType: state.pinpointMode?.formType || action.payload?.formType || null,
+          coords: {
+            lat: action.payload.lat,
+            lon: action.payload.lon,
+          },
+        },
+      };
+
+    case "CANCEL_PINPOINT":
+      return {
+        ...state,
+        pinpointMode: {
+          active: false,
+          formType: state.pinpointMode?.formType || null,
+          coords: state.pinpointMode?.coords || null,
+        },
+      };
+
+    case "CLEAR_PINPOINT":
+      return {
+        ...state,
+        pinpointMode: {
+          active: false,
+          formType: null,
+          coords: null,
+        },
+      };
 
     case "SET_LOADING":
       return {
@@ -432,7 +501,8 @@ export function WorkspaceProvider({ children }) {
       const resp = await fetch("/api/organizations");
       if (resp.ok) {
         const data = await resp.json();
-        dispatch({ type: "SET_ORGANIZATIONS", payload: data.organizations || [] });
+        const orgs = Array.isArray(data) ? data : (data.organizations || []);
+        dispatch({ type: "SET_ORGANIZATIONS", payload: orgs });
       } else {
         dispatch({ type: "SET_LOADING", payload: { key: "organizations", value: false } });
       }
@@ -900,6 +970,22 @@ export function WorkspaceProvider({ children }) {
     dispatch({ type: "SET_MAP_CENTER", payload: center });
   }, []);
 
+  const startPinpoint = useCallback((formType = "need") => {
+    dispatch({ type: "START_PINPOINT", payload: { formType } });
+  }, []);
+
+  const setPinpointCoords = useCallback((coords) => {
+    dispatch({ type: "SET_PINPOINT_COORDS", payload: coords });
+  }, []);
+
+  const cancelPinpoint = useCallback(() => {
+    dispatch({ type: "CANCEL_PINPOINT" });
+  }, []);
+
+  const clearPinpoint = useCallback(() => {
+    dispatch({ type: "CLEAR_PINPOINT" });
+  }, []);
+
   const value = {
     state,
     dispatch,
@@ -908,6 +994,10 @@ export function WorkspaceProvider({ children }) {
     openPanel,
     closePanel,
     setMapCenter,
+    startPinpoint,
+    setPinpointCoords,
+    cancelPinpoint,
+    clearPinpoint,
     setSelectedEntity,
     performSearch,
     refreshAll,

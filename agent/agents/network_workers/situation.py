@@ -6,7 +6,79 @@ Deterministic: uses existing repository data, no LLM required.
 """
 
 from __future__ import annotations
+
 from datetime import datetime, timezone
+from typing import Any, Optional
+
+from agent.agents.base import AgentFinding, FindingProvenance, FindingSeverity
+from agent.agents.events import AgentEvent, AgentEventType
+
+
+class SituationAgent:
+    """
+    Network Specialist Agent responsible for flood extent and situational monitoring.
+    """
+    agent_id: str = "network_specialist_situation"
+    name: str = "Network Situation Agent"
+    domain: str = "situation"
+    allowed_context: list[str] = ["shared_state"]
+    allowed_tools: list[str] = ["flood_tool", "region_scan_tool"]
+    accepted_event_types: list[str] = [
+        AgentEventType.FLOOD_SNAPSHOT_UPDATED.value,
+        AgentEventType.NEED_CREATED.value,
+    ]
+
+    def analyze(self, repo: Any) -> list[AgentFinding]:
+        """Run situation analysis and return structured AgentFindings."""
+        raw = analyze_situation(repo)
+        findings: list[AgentFinding] = []
+
+        # Convert raw findings to typed AgentFinding objects
+        for f in raw.get("findings", []):
+            findings.append(
+                AgentFinding(
+                    agent_id=self.agent_id,
+                    domain=self.domain,
+                    finding_type=f.get("type", "situation_finding"),
+                    summary=f.get("summary", f.get("title", "")),
+                    severity=f.get("severity", FindingSeverity.INFORMATION.value),
+                    confidence=0.9,
+                    provenance=FindingProvenance.OBSERVED,
+                    evidence=raw.get("evidence", []),
+                    data_gaps=raw.get("data_gaps", []),
+                    uncertainty=raw.get("uncertainty", []),
+                    location=f.get("location"),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+
+        # If there are data gaps but no findings, emit a data gap finding
+        if not findings and raw.get("data_gaps"):
+            findings.append(
+                AgentFinding(
+                    agent_id=self.agent_id,
+                    domain=self.domain,
+                    finding_type="data_gap",
+                    summary="Incomplete or missing flood snapshot data",
+                    severity=FindingSeverity.INFORMATION.value,
+                    confidence=1.0,
+                    provenance=FindingProvenance.UNKNOWN,
+                    data_gaps=raw.get("data_gaps", []),
+                    uncertainty=raw.get("uncertainty", []),
+                )
+            )
+
+        return findings
+
+    def handle_event(self, event: AgentEvent, repo: Any) -> list[AgentFinding]:
+        """Process event related to flood snapshot updates."""
+        all_findings = self.analyze(repo)
+        if event.district:
+            # Prioritize findings for the relevant district
+            district_findings = [f for f in all_findings if f.location == event.district]
+            if district_findings:
+                return district_findings
+        return all_findings
 
 
 def analyze_situation(repo) -> dict:
@@ -103,12 +175,12 @@ def analyze_situation(repo) -> dict:
     return _build_result(findings, evidence, uncertainty, data_gaps)
 
 
-def _build_result(findings, evidence, uncertainty, data_gaps):
+def _build_result(findings, evidence, uncertainty, data_gaps, recommendations=None):
     return {
         "worker": "situation",
         "findings": findings,
         "evidence": evidence,
         "uncertainty": uncertainty,
         "data_gaps": data_gaps,
-        "recommendations": [],
+        "recommendations": recommendations or [],
     }

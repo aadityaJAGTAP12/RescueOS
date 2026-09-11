@@ -697,3 +697,29 @@ def make_settlement_id(district_id: str, name: str) -> str:
     """Generate a deterministic ID for a settlement."""
     slug = name.lower().replace(" ", "_").replace("-", "_")
     return f"{district_id}_{slug}"
+
+
+# Phase 2A re-exports
+from agent.agents.events import AgentEvent, AgentEventType, EventStatus
+
+# Phase 2B re-exports
+from agent.proactive.models import (
+    ProactiveScan,
+    ProactiveFinding,
+    ScanStatus,
+    FindingLifecycleStatus,
+    generate_finding_fingerprint,
+)
+
+# Production Hardening re-exports
+from agent.auth.models import (
+    User,
+    OrganizationMembership,
+    UserRole,
+    AuthenticatedPrincipal,
+)
+from agent.audit.models import (
+    AuditLog,
+)
+
+

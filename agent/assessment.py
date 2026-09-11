@@ -304,7 +304,7 @@ def run_relief_assessment(location=None, lat=None, lon=None, use_llm=False, agen
                 })
         except Exception as e:
             _t1 = time.time()
-            llm_synthesis = f"LLM synthesis unavailable: {e}"
+            llm_synthesis = f"LLM synthesis unavailable: {type(e).__name__}"
             if agent_trace is not None:
                 agent_trace.append({
                     "agent_name": "coordinator_agent",
@@ -314,7 +314,7 @@ def run_relief_assessment(location=None, lat=None, lon=None, use_llm=False, agen
                     "duration_ms": round((_t1 - _t0) * 1000, 1),
                     "tools_called": ["coordinator_synthesize"],
                     "output_summary": f"LLM synthesis failed: {type(e).__name__}",
-                    "raw_output": str(e),
+                    "raw_output": type(e).__name__,
                     "status": "error",
                 })
 

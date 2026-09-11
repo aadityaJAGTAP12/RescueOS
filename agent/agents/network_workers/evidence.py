@@ -7,6 +7,75 @@ Ensures every important recommendation has supporting evidence.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from agent.agents.base import AgentFinding, FindingProvenance, FindingSeverity
+from agent.agents.events import AgentEvent, AgentEventType
+
+
+class EvidenceAgent:
+    """
+    Network Specialist Agent responsible for cross-domain evidence grounding and provenance synthesis.
+    """
+    agent_id: str = "network_specialist_evidence"
+    name: str = "Network Evidence Agent"
+    domain: str = "evidence"
+    allowed_context: list[str] = ["shared_state"]
+    allowed_tools: list[str] = []
+    accepted_event_types: list[str] = [
+        AgentEventType.FLOOD_SNAPSHOT_UPDATED.value,
+        AgentEventType.NEED_CREATED.value,
+        AgentEventType.FIELD_REPORT_CREATED.value,
+    ]
+
+    def analyze(self, repo: Any) -> list[AgentFinding]:
+        """Run evidence synthesis and return structured AgentFindings."""
+        raw = synthesize_network_evidence(repo)
+        findings: list[AgentFinding] = []
+
+        if raw.get("uncertainty"):
+            for unc in raw.get("uncertainty", []):
+                findings.append(
+                    AgentFinding(
+                        agent_id=self.agent_id,
+                        domain=self.domain,
+                        finding_type="uncertainty_note",
+                        summary=unc,
+                        severity=FindingSeverity.INFORMATION.value,
+                        confidence=1.0,
+                        provenance=FindingProvenance.UNKNOWN,
+                        evidence=raw.get("evidence", []),
+                        data_gaps=raw.get("data_gaps", []),
+                        uncertainty=raw.get("uncertainty", []),
+                        timestamp=datetime.now(timezone.utc).isoformat(),
+                    )
+                )
+
+        if raw.get("data_gaps"):
+            for gap in raw.get("data_gaps", []):
+                findings.append(
+                    AgentFinding(
+                        agent_id=self.agent_id,
+                        domain=self.domain,
+                        finding_type="data_gap",
+                        summary=gap.get("detail", gap.get("item", "Data gap identified")),
+                        severity=FindingSeverity.INFORMATION.value,
+                        confidence=1.0,
+                        provenance=FindingProvenance.UNKNOWN,
+                        evidence=raw.get("evidence", []),
+                        data_gaps=raw.get("data_gaps", []),
+                        uncertainty=raw.get("uncertainty", []),
+                        timestamp=datetime.now(timezone.utc).isoformat(),
+                    )
+                )
+
+        return findings
+
+    def handle_event(self, event: AgentEvent, repo: Any) -> list[AgentFinding]:
+        """Process event related to evidence updates."""
+        return self.analyze(repo)
+
 
 def synthesize_network_evidence(repo) -> dict:
     """

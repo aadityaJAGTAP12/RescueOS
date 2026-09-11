@@ -7,6 +7,58 @@ Identifies logistical mismatches and coordination opportunities.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from agent.agents.base import AgentFinding, FindingProvenance, FindingSeverity
+from agent.agents.events import AgentEvent, AgentEventType
+
+
+class LogisticsAgent:
+    """
+    Network Specialist Agent responsible for evaluating open supply needs against public offers.
+    """
+    agent_id: str = "network_specialist_logistics"
+    name: str = "Network Logistics Agent"
+    domain: str = "logistics"
+    allowed_context: list[str] = ["shared_state"]
+    allowed_tools: list[str] = ["allocation_tool", "matching_core"]
+    accepted_event_types: list[str] = [
+        AgentEventType.NEED_CREATED.value,
+        AgentEventType.OFFER_CREATED.value,
+        AgentEventType.OPERATION_CREATED.value,
+        AgentEventType.ROAD_OVERRIDE_APPLIED.value,
+    ]
+
+    def analyze(self, repo: Any) -> list[AgentFinding]:
+        """Run logistics analysis and return structured AgentFindings."""
+        raw = analyze_logistics(repo)
+        findings: list[AgentFinding] = []
+
+        for f in raw.get("findings", []):
+            findings.append(
+                AgentFinding(
+                    agent_id=self.agent_id,
+                    domain=self.domain,
+                    finding_type=f.get("type", "logistics_finding"),
+                    summary=f.get("summary", f.get("title", "")),
+                    severity=f.get("severity", FindingSeverity.URGENT.value),
+                    confidence=0.95,
+                    provenance=FindingProvenance.OBSERVED,
+                    evidence=raw.get("evidence", []),
+                    data_gaps=raw.get("data_gaps", []),
+                    uncertainty=raw.get("uncertainty", []),
+                    location=f.get("location"),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+
+        return findings
+
+    def handle_event(self, event: AgentEvent, repo: Any) -> list[AgentFinding]:
+        """Process event related to logistics changes."""
+        return self.analyze(repo)
+
 
 def analyze_logistics(repo) -> dict:
     """

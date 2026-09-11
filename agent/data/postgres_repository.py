@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import text, select, insert, update
+from sqlalchemy import text, select, insert, update, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from geoalchemy2.functions import (
     ST_Contains, ST_Distance, ST_DWithin, ST_GeomFromText,
@@ -45,11 +45,21 @@ from agent.data.models import (
     Operation,
     ActivityEvent,
     Notification,
+    AgentEvent,
+    AgentEventType,
+    EventStatus,
+    ProactiveScan,
+    ProactiveFinding,
+    User,
+    OrganizationMembership,
+    AuditLog,
 )
 from agent.data.repository import DataRepository
 from agent.data.schema import (
     districts, settlements, flood_snapshots, field_reports,
     overrides, buildings, medical_facilities, roads,
+    agent_events, proactive_scans, proactive_findings,
+    users, organization_memberships, audit_logs,
     get_engine, SRID,
 )
 
@@ -74,6 +84,18 @@ class PostgresRepository(DataRepository):
             self._engine = engine
         else:
             self._engine = get_engine(database_url)
+
+        # Ensure schema tables (including agent_events outbox) exist, then
+        # apply additive migrations (idempotent — safe on populated DBs).
+        from agent.data.schema import create_all_tables, run_migrations
+        create_all_tables(self._engine)
+        try:
+            run_migrations(self._engine)
+        except Exception as e:
+            # Migration failure must not silently break the app; surface it.
+            import logging
+            logging.getLogger("reliefos.db").error("Schema migration failed: %s", e)
+            raise
 
     # ------------------------------------------------------------------
     # Helpers
@@ -115,6 +137,29 @@ class PostgresRepository(DataRepository):
                 return row[0] if row else None
         except Exception:
             return None
+
+    @staticmethod
+    def _iso_to_dt(val) -> Optional[datetime]:
+        """Convert ISO string or datetime to datetime."""
+        if val is None:
+            return None
+        if isinstance(val, datetime):
+            return val
+        try:
+            return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _dt_to_iso(val) -> Optional[str]:
+        """Convert datetime to ISO 8601 string."""
+        if val is None:
+            return None
+        if isinstance(val, str):
+            return val
+        if hasattr(val, "isoformat"):
+            return val.isoformat()
+        return str(val)
 
     # ------------------------------------------------------------------
     # Districts
@@ -703,6 +748,16 @@ class PostgresRepository(DataRepository):
             provenance=Provenance.REAL,
         )
         self.upsert_flood_snapshot(snapshot)
+        try:
+            from agent.agents.events import make_flood_snapshot_event
+            self.append_agent_event(make_flood_snapshot_event(
+                snapshot_id=snapshot.id,
+                district=district_id,
+                priority="urgent",
+                metadata={"polygon_count": len(features), "source": source},
+            ))
+        except Exception:
+            pass
         return snapshot
 
     # ------------------------------------------------------------------
@@ -792,13 +847,14 @@ class PostgresRepository(DataRepository):
 
     def list_needs(self, district_id: str = None, status: str = None, urgency: str = None) -> list[Need]:
         from agent.data.schema import needs as needs_table
+        from sqlalchemy import func
         stmt = select(needs_table)
         if district_id:
-            stmt = stmt.where(needs_table.c.district_id == district_id)
+            stmt = stmt.where(func.lower(needs_table.c.district_id) == district_id.lower())
         if status:
-            stmt = stmt.where(needs_table.c.status == status)
+            stmt = stmt.where(func.lower(needs_table.c.status) == status.lower())
         if urgency:
-            stmt = stmt.where(needs_table.c.urgency == urgency)
+            stmt = stmt.where(func.lower(needs_table.c.urgency) == urgency.lower())
         stmt = stmt.order_by(needs_table.c.created_at.desc())
         rows = self._execute_fetchall(stmt)
         return [self._row_to_need(r) for r in rows]
@@ -867,15 +923,16 @@ class PostgresRepository(DataRepository):
 
     def list_resource_offers(self, organization_id: str = None, district_id: str = None, status: str = None, resource_type: str = None) -> list[ResourceOffer]:
         from agent.data.schema import resource_offers as offers_table
+        from sqlalchemy import func
         stmt = select(offers_table)
         if organization_id:
             stmt = stmt.where(offers_table.c.organization_id == organization_id)
         if district_id:
-            stmt = stmt.where(offers_table.c.district_id == district_id)
+            stmt = stmt.where(func.lower(offers_table.c.district_id) == district_id.lower())
         if status:
-            stmt = stmt.where(offers_table.c.status == status)
+            stmt = stmt.where(func.lower(offers_table.c.status) == status.lower())
         if resource_type:
-            stmt = stmt.where(offers_table.c.resource_type == resource_type)
+            stmt = stmt.where(func.lower(offers_table.c.resource_type) == resource_type.lower())
         stmt = stmt.order_by(offers_table.c.created_at.desc())
         rows = self._execute_fetchall(stmt)
         return [self._row_to_resource_offer(r) for r in rows]
@@ -932,11 +989,12 @@ class PostgresRepository(DataRepository):
 
     def list_operations(self, district_id: str = None, status: str = None, lead_organization_id: str = None) -> list[Operation]:
         from agent.data.schema import operations as ops_table
+        from sqlalchemy import func
         stmt = select(ops_table)
         if district_id:
-            stmt = stmt.where(ops_table.c.district_id == district_id)
+            stmt = stmt.where(func.lower(ops_table.c.district_id) == district_id.lower())
         if status:
-            stmt = stmt.where(ops_table.c.status == status)
+            stmt = stmt.where(func.lower(ops_table.c.status) == status.lower())
         if lead_organization_id:
             stmt = stmt.where(ops_table.c.lead_organization_id == lead_organization_id)
         stmt = stmt.order_by(ops_table.c.created_at.desc())
@@ -1030,6 +1088,15 @@ class PostgresRepository(DataRepository):
         )
         self._execute(stmt)
         return notification
+
+    def get_notification(self, notification_id: str) -> Optional[Notification]:
+        from agent.data.schema import notifications as notif_table
+        row = self._execute_fetchone(
+            select(notif_table).where(notif_table.c.id == notification_id)
+        )
+        if row is None:
+            return None
+        return self._row_to_notification(row)
 
     def list_notifications(self, recipient_id: str, unread_only: bool = False, limit: int = 50) -> list[Notification]:
         from agent.data.schema import notifications as notif_table
@@ -1452,6 +1519,626 @@ class PostgresRepository(DataRepository):
             "org_evaluation": row.org_evaluation,   # PRIVATE — domain layer only
             "private_factors": row.private_factors,  # PRIVATE — domain layer only
         }
+
+    # ------------------------------------------------------------------
+    # Agent Events / Outbox (Phase 2A)
+    # ------------------------------------------------------------------
+
+    def append_agent_event(self, event: AgentEvent) -> AgentEvent:
+        """Persist a machine-facing agent event to PostgreSQL outbox."""
+        if not event.event_id:
+            import uuid
+            event.event_id = f"evt_{str(uuid.uuid4())[:12]}"
+        created_at_dt = self._iso_to_dt(event.created_at) or datetime.now(timezone.utc)
+        stmt = pg_insert(agent_events).values(
+            id=event.event_id,
+            event_type=event.event_type if isinstance(event.event_type, str) else event.event_type.value,
+            entity_type=event.entity_type,
+            entity_id=event.entity_id,
+            status=event.status if isinstance(event.status, str) else event.status.value,
+            priority=event.priority,
+            source=event.source,
+            district=event.district,
+            organization_id=event.organization_id,
+            metadata=event.metadata,
+            retry_count=event.retry_count,
+            max_retries=event.max_retries,
+            created_at=created_at_dt,
+            processed_at=self._iso_to_dt(event.processed_at),
+            error_detail=event.error_detail,
+            execution_result=event.execution_result,
+        ).on_conflict_do_nothing(index_elements=["id"])
+        self._execute(stmt)
+        return event
+
+    def get_agent_event(self, event_id: str) -> Optional[AgentEvent]:
+        """Retrieve an agent event by ID from PostgreSQL."""
+        stmt = select(agent_events).where(agent_events.c.id == event_id)
+        row = self._execute_fetchone(stmt)
+        if not row:
+            return None
+        return self._row_to_agent_event(row)
+
+    def list_agent_events(
+        self,
+        status: Optional[str] = None,
+        event_type: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[AgentEvent]:
+        """List agent events with optional filtering from PostgreSQL."""
+        stmt = select(agent_events)
+        if status:
+            stmt = stmt.where(agent_events.c.status == status)
+        if event_type:
+            stmt = stmt.where(agent_events.c.event_type == event_type)
+        if entity_type:
+            stmt = stmt.where(agent_events.c.entity_type == entity_type)
+        stmt = stmt.order_by(agent_events.c.created_at.desc()).limit(limit)
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_agent_event(r) for r in rows]
+
+    def update_agent_event_status(
+        self,
+        event_id: str,
+        status: str,
+        processed_at: Optional[datetime] = None,
+        error_detail: Optional[str] = None,
+        execution_result: Optional[dict] = None,
+    ) -> Optional[AgentEvent]:
+        """Update status and outcome of an agent event in PostgreSQL."""
+        values = {"status": status}
+        if processed_at is not None:
+            values["processed_at"] = processed_at if isinstance(processed_at, datetime) else self._iso_to_dt(processed_at)
+        elif status in (EventStatus.PROCESSED.value, EventStatus.FAILED.value, EventStatus.SKIPPED_DUPLICATE.value):
+            values["processed_at"] = datetime.now(timezone.utc)
+        if error_detail is not None:
+            values["error_detail"] = error_detail
+        if execution_result is not None:
+            values["execution_result"] = execution_result
+
+        stmt = update(agent_events).where(agent_events.c.id == event_id).values(**values)
+        self._execute(stmt)
+        return self.get_agent_event(event_id)
+
+    def claim_pending_agent_events(self, limit: int = 10) -> list[AgentEvent]:
+        """Atomically claim pending agent events for dispatch.
+
+        Sets claimed_at so stale-claim recovery measures event age from the
+        claim, not from creation (an old event claimed just now is NOT stale).
+        """
+        now = datetime.now(timezone.utc)
+        with self._engine.begin() as conn:
+            # Select pending events with FOR UPDATE SKIP LOCKED
+            subquery = (
+                select(agent_events.c.id)
+                .where(agent_events.c.status == EventStatus.PENDING.value)
+                .order_by(agent_events.c.created_at.asc())
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+            claimed_ids = [r[0] for r in conn.execute(subquery).fetchall()]
+            if not claimed_ids:
+                return []
+
+            stmt = (
+                update(agent_events)
+                .where(agent_events.c.id.in_(claimed_ids))
+                .values(status=EventStatus.CLAIMED.value, claimed_at=now)
+            )
+            conn.execute(stmt)
+
+            fetch_stmt = select(agent_events).where(agent_events.c.id.in_(claimed_ids))
+            rows = conn.execute(fetch_stmt).fetchall()
+            return [self._row_to_agent_event(r) for r in rows]
+
+    def _row_to_agent_event(self, row) -> AgentEvent:
+        """Map database row to AgentEvent instance."""
+        return AgentEvent(
+            event_id=row.id,
+            event_type=row.event_type,
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            status=row.status,
+            priority=row.priority,
+            source=row.source,
+            district=row.district,
+            organization_id=row.organization_id,
+            metadata=row.metadata or {},
+            retry_count=row.retry_count or 0,
+            max_retries=row.max_retries or 3,
+            created_at=self._dt_to_iso(row.created_at),
+            claimed_at=self._dt_to_iso(getattr(row, "claimed_at", None)),
+            processed_at=self._dt_to_iso(row.processed_at),
+            error_detail=row.error_detail,
+            execution_result=row.execution_result,
+        )
+
+    # ------------------------------------------------------------------
+    # Proactive Scans & Findings (Phase 2B)
+    # ------------------------------------------------------------------
+
+    def create_proactive_scan(self, scan: ProactiveScan) -> ProactiveScan:
+        """Create a new proactive scan record in PostgreSQL."""
+        if not scan.id:
+            import uuid
+            scan.id = f"scan_{str(uuid.uuid4())[:12]}"
+        started_at_dt = scan.started_at or datetime.now(timezone.utc)
+        stmt = pg_insert(proactive_scans).values(
+            id=scan.id,
+            started_at=started_at_dt,
+            completed_at=scan.completed_at,
+            trigger=scan.trigger,
+            status=scan.status if isinstance(scan.status, str) else scan.status.value,
+            scope=scan.scope,
+            detectors_run=scan.detectors_run,
+            specialists_invoked=scan.specialists_invoked,
+            findings_count=scan.findings_count,
+            summary=scan.summary,
+            metrics=scan.metrics,
+            failures=scan.failures,
+        ).on_conflict_do_nothing(index_elements=["id"])
+        self._execute(stmt)
+        return scan
+
+    def get_proactive_scan(self, scan_id: str) -> Optional[ProactiveScan]:
+        """Retrieve a proactive scan by ID from PostgreSQL."""
+        stmt = select(proactive_scans).where(proactive_scans.c.id == scan_id)
+        row = self._execute_fetchone(stmt)
+        if not row:
+            return None
+        return self._row_to_proactive_scan(row)
+
+    def list_proactive_scans(
+        self,
+        status: Optional[str] = None,
+        trigger: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[ProactiveScan]:
+        """List proactive scans with optional filtering from PostgreSQL."""
+        stmt = select(proactive_scans)
+        if status:
+            stmt = stmt.where(proactive_scans.c.status == status)
+        if trigger:
+            stmt = stmt.where(proactive_scans.c.trigger == trigger)
+        stmt = stmt.order_by(proactive_scans.c.started_at.desc()).limit(limit)
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_proactive_scan(r) for r in rows]
+
+    def update_proactive_scan(
+        self,
+        scan_id: str,
+        status: Optional[str] = None,
+        completed_at: Optional[datetime] = None,
+        findings_count: Optional[int] = None,
+        summary: Optional[str] = None,
+        metrics: Optional[dict] = None,
+        failures: Optional[list] = None,
+        detectors_run: Optional[list] = None,
+        specialists_invoked: Optional[list] = None,
+    ) -> Optional[ProactiveScan]:
+        """Update a proactive scan's status and results in PostgreSQL."""
+        values = {}
+        if status is not None:
+            values["status"] = status
+        if completed_at is not None:
+            values["completed_at"] = completed_at
+        if findings_count is not None:
+            values["findings_count"] = findings_count
+        if summary is not None:
+            values["summary"] = summary
+        if metrics is not None:
+            values["metrics"] = metrics
+        if failures is not None:
+            values["failures"] = failures
+        if detectors_run is not None:
+            values["detectors_run"] = detectors_run
+        if specialists_invoked is not None:
+            values["specialists_invoked"] = specialists_invoked
+
+        if not values:
+            return self.get_proactive_scan(scan_id)
+
+        stmt = update(proactive_scans).where(proactive_scans.c.id == scan_id).values(**values)
+        self._execute(stmt)
+        return self.get_proactive_scan(scan_id)
+
+    def upsert_proactive_finding(self, finding: ProactiveFinding) -> ProactiveFinding:
+        """Upsert a proactive finding by fingerprint or ID in PostgreSQL."""
+        existing = self.get_proactive_finding_by_fingerprint(finding.fingerprint)
+        if existing:
+            values = {
+                "scan_id": finding.scan_id,
+                "status": finding.status if isinstance(finding.status, str) else finding.status.value,
+                "severity": finding.severity,
+                "title": finding.title,
+                "summary": finding.summary,
+                "evidence": finding.evidence,
+                "provenance": finding.provenance,
+                "uncertainty": finding.uncertainty,
+                "data_gaps": finding.data_gaps,
+                "suggested_action": finding.suggested_action,
+                "last_detected_at": finding.last_detected_at or datetime.now(timezone.utc),
+            }
+            if finding.resolved_at is not None:
+                values["resolved_at"] = finding.resolved_at
+            if finding.notification_sent_at is not None:
+                values["notification_sent_at"] = finding.notification_sent_at
+            if finding.severity_history:
+                values["severity_history"] = finding.severity_history
+
+            stmt = update(proactive_findings).where(proactive_findings.c.id == existing.id).values(**values)
+            self._execute(stmt)
+            return self.get_proactive_finding(existing.id) or finding
+        else:
+            if not finding.id:
+                import uuid
+                finding.id = f"fnd_{str(uuid.uuid4())[:12]}"
+            stmt = pg_insert(proactive_findings).values(
+                id=finding.id,
+                scan_id=finding.scan_id,
+                fingerprint=finding.fingerprint,
+                domain=finding.domain,
+                detector_id=finding.detector_id,
+                status=finding.status if isinstance(finding.status, str) else finding.status.value,
+                severity=finding.severity,
+                entity_type=finding.entity_type,
+                entity_id=finding.entity_id,
+                title=finding.title,
+                summary=finding.summary,
+                evidence=finding.evidence,
+                provenance=finding.provenance,
+                uncertainty=finding.uncertainty,
+                data_gaps=finding.data_gaps,
+                suggested_action=finding.suggested_action,
+                first_detected_at=finding.first_detected_at or datetime.now(timezone.utc),
+                last_detected_at=finding.last_detected_at or datetime.now(timezone.utc),
+                resolved_at=finding.resolved_at,
+                notification_sent_at=finding.notification_sent_at,
+                severity_history=finding.severity_history,
+            )
+            self._execute(stmt)
+            return finding
+
+    def get_proactive_finding(self, finding_id: str) -> Optional[ProactiveFinding]:
+        """Retrieve a proactive finding by ID from PostgreSQL."""
+        stmt = select(proactive_findings).where(proactive_findings.c.id == finding_id)
+        row = self._execute_fetchone(stmt)
+        if not row:
+            return None
+        return self._row_to_proactive_finding(row)
+
+    def get_proactive_finding_by_fingerprint(self, fingerprint: str) -> Optional[ProactiveFinding]:
+        """Retrieve the most recent proactive finding with given fingerprint from PostgreSQL."""
+        stmt = (
+            select(proactive_findings)
+            .where(proactive_findings.c.fingerprint == fingerprint)
+            .order_by(proactive_findings.c.last_detected_at.desc())
+            .limit(1)
+        )
+        row = self._execute_fetchone(stmt)
+        if not row:
+            return None
+        return self._row_to_proactive_finding(row)
+
+    def list_proactive_findings(
+        self,
+        status: Optional[str] = None,
+        domain: Optional[str] = None,
+        severity: Optional[str] = None,
+        scan_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[ProactiveFinding]:
+        """List proactive findings with optional filtering from PostgreSQL."""
+        stmt = select(proactive_findings)
+        if status:
+            stmt = stmt.where(proactive_findings.c.status == status)
+        if domain:
+            stmt = stmt.where(proactive_findings.c.domain == domain)
+        if severity:
+            stmt = stmt.where(proactive_findings.c.severity == severity)
+        if scan_id:
+            stmt = stmt.where(proactive_findings.c.scan_id == scan_id)
+        stmt = stmt.order_by(proactive_findings.c.last_detected_at.desc()).limit(limit)
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_proactive_finding(r) for r in rows]
+
+    def _row_to_proactive_scan(self, row) -> ProactiveScan:
+        """Map database row to ProactiveScan instance."""
+        return ProactiveScan(
+            id=row.id,
+            started_at=row.started_at,
+            completed_at=row.completed_at,
+            trigger=row.trigger,
+            status=row.status,
+            scope=row.scope,
+            detectors_run=row.detectors_run or [],
+            specialists_invoked=row.specialists_invoked or [],
+            findings_count=row.findings_count or 0,
+            summary=row.summary,
+            metrics=row.metrics,
+            failures=row.failures or [],
+        )
+
+    def _row_to_proactive_finding(self, row) -> ProactiveFinding:
+        """Map database row to ProactiveFinding instance."""
+        return ProactiveFinding(
+            id=row.id,
+            scan_id=row.scan_id,
+            fingerprint=row.fingerprint,
+            domain=row.domain,
+            detector_id=row.detector_id,
+            status=row.status,
+            severity=row.severity,
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            title=row.title,
+            summary=row.summary,
+            evidence=row.evidence or {},
+            provenance=row.provenance or "INFERRED",
+            uncertainty=row.uncertainty or [],
+            data_gaps=row.data_gaps or [],
+            suggested_action=row.suggested_action,
+            first_detected_at=row.first_detected_at,
+            last_detected_at=row.last_detected_at,
+            resolved_at=row.resolved_at,
+            notification_sent_at=row.notification_sent_at,
+            severity_history=row.severity_history or [],
+        )
+
+    def recover_stale_agent_events(self, stale_threshold_seconds: int = 300) -> list[AgentEvent]:
+        """Recover events stuck in CLAIMED or PROCESSING beyond timeout.
+
+        Staleness is measured from claimed_at when present (legacy rows:
+        created_at), so a long-lived event claimed moments ago by a live
+        worker is never falsely recovered.
+        """
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=stale_threshold_seconds)
+        with self._engine.begin() as conn:
+            # Find stale claimed/processing events: prefer claimed_at, fall
+            # back to created_at for rows created before the column existed.
+            subquery = (
+                select(agent_events)
+                .where(
+                    agent_events.c.status.in_([EventStatus.CLAIMED.value, EventStatus.PROCESSING.value]),
+                    func.coalesce(agent_events.c.claimed_at, agent_events.c.created_at) <= cutoff
+                )
+                .with_for_update(skip_locked=True)
+            )
+            rows = conn.execute(subquery).fetchall()
+            recovered = []
+            for r in rows:
+                retries = r.retry_count or 0
+                max_r = r.max_retries or 3
+                if retries < max_r:
+                    stmt = (
+                        update(agent_events)
+                        .where(agent_events.c.id == r.id)
+                        .values(
+                            status=EventStatus.PENDING.value,
+                            retry_count=retries + 1,
+                        )
+                    )
+                    conn.execute(stmt)
+                    recovered.append(self._row_to_agent_event(r))
+                else:
+                    stmt = (
+                        update(agent_events)
+                        .where(agent_events.c.id == r.id)
+                        .values(
+                            status=EventStatus.FAILED.value,
+                            error_detail="Max retries exceeded after stale worker timeout",
+                            processed_at=datetime.now(timezone.utc),
+                        )
+                    )
+                    conn.execute(stmt)
+            return recovered
+
+    # ------------------------------------------------------------------
+    # Authentication & Authorization (Production Hardening)
+    # ------------------------------------------------------------------
+
+    def create_user(self, user: User) -> User:
+        """Create a user in PostgreSQL."""
+        if not user.id:
+            import uuid
+            user.id = f"usr_{str(uuid.uuid4())[:12]}"
+        stmt = pg_insert(users).values(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            password_hash=user.password_hash,
+            full_name=user.full_name,
+            is_active=user.is_active,
+            created_at=user.created_at or datetime.now(timezone.utc),
+            metadata=user.metadata or {},
+        ).on_conflict_do_nothing(index_elements=["id"])
+        self._execute(stmt)
+        return user
+
+    def get_user_by_id(self, user_id: str) -> Optional[User]:
+        """Retrieve user by ID."""
+        stmt = select(users).where(users.c.id == user_id)
+        row = self._execute_fetchone(stmt)
+        if not row:
+            return None
+        return self._row_to_user(row)
+
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        """Retrieve user by username."""
+        stmt = select(users).where(users.c.username.ilike(username))
+        row = self._execute_fetchone(stmt)
+        if not row:
+            return None
+        return self._row_to_user(row)
+
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        """Retrieve user by email."""
+        stmt = select(users).where(users.c.email.ilike(email))
+        row = self._execute_fetchone(stmt)
+        if not row:
+            return None
+        return self._row_to_user(row)
+
+    def update_user(self, user: User) -> Optional[User]:
+        """Update an existing user in PostgreSQL."""
+        stmt = update(users).where(users.c.id == user.id).values(
+            username=user.username,
+            email=user.email,
+            password_hash=user.password_hash,
+            full_name=user.full_name,
+            is_active=user.is_active,
+            metadata=user.metadata or {},
+        )
+        self._execute(stmt)
+        return self.get_user_by_id(user.id)
+
+    def list_users(self, limit: int = 100) -> list[User]:
+        """List users from PostgreSQL."""
+        stmt = select(users).order_by(users.c.created_at.desc()).limit(limit)
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_user(r) for r in rows]
+
+    def create_membership(self, membership: OrganizationMembership) -> OrganizationMembership:
+        """Create or update organization membership in PostgreSQL."""
+        if not membership.id:
+            import uuid
+            membership.id = f"mem_{str(uuid.uuid4())[:12]}"
+        role_val = membership.role if isinstance(membership.role, str) else membership.role.value
+        stmt = pg_insert(organization_memberships).values(
+            id=membership.id,
+            user_id=membership.user_id,
+            organization_id=membership.organization_id,
+            role=role_val,
+            created_at=membership.created_at or datetime.now(timezone.utc),
+        ).on_conflict_do_update(
+            index_elements=["user_id", "organization_id"],
+            set_={"role": role_val}
+        )
+        self._execute(stmt)
+        return self.get_membership(membership.user_id, membership.organization_id) or membership
+
+    def get_membership(self, user_id: str, organization_id: str) -> Optional[OrganizationMembership]:
+        """Get membership for user and org."""
+        stmt = select(organization_memberships).where(
+            organization_memberships.c.user_id == user_id,
+            organization_memberships.c.organization_id == organization_id,
+        )
+        row = self._execute_fetchone(stmt)
+        if not row:
+            return None
+        return self._row_to_membership(row)
+
+    def list_memberships_for_user(self, user_id: str) -> list[OrganizationMembership]:
+        """List memberships for a user."""
+        stmt = select(organization_memberships).where(organization_memberships.c.user_id == user_id)
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_membership(r) for r in rows]
+
+    def list_memberships_for_org(self, organization_id: str) -> list[OrganizationMembership]:
+        """List memberships for an organization."""
+        stmt = select(organization_memberships).where(organization_memberships.c.organization_id == organization_id)
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_membership(r) for r in rows]
+
+    def delete_membership(self, user_id: str, organization_id: str) -> bool:
+        """Delete an organization membership."""
+        from sqlalchemy import delete
+        stmt = delete(organization_memberships).where(
+            organization_memberships.c.user_id == user_id,
+            organization_memberships.c.organization_id == organization_id,
+        )
+        res = self._execute(stmt)
+        return (res.rowcount or 0) > 0
+
+    # ------------------------------------------------------------------
+    # Consequential Action Audit Logs (Production Hardening)
+    # ------------------------------------------------------------------
+
+    def create_audit_log(self, log: AuditLog) -> AuditLog:
+        """Insert an immutable audit log record in PostgreSQL."""
+        if not log.id:
+            import uuid
+            log.id = f"aud_{str(uuid.uuid4())[:12]}"
+        stmt = pg_insert(audit_logs).values(
+            id=log.id,
+            timestamp=log.timestamp or datetime.now(timezone.utc),
+            actor_id=log.actor_id,
+            organization_id=log.organization_id,
+            action=log.action,
+            entity_type=log.entity_type,
+            entity_id=log.entity_id,
+            from_state=log.from_state,
+            to_state=log.to_state,
+            details=log.details or {},
+            ip_address=log.ip_address,
+        )
+        self._execute(stmt)
+        return log
+
+    def list_audit_logs(
+        self,
+        actor_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        action: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AuditLog]:
+        """List audit logs from PostgreSQL."""
+        stmt = select(audit_logs)
+        if actor_id:
+            stmt = stmt.where(audit_logs.c.actor_id == actor_id)
+        if organization_id:
+            stmt = stmt.where(audit_logs.c.organization_id == organization_id)
+        if entity_type:
+            stmt = stmt.where(audit_logs.c.entity_type == entity_type)
+        if entity_id:
+            stmt = stmt.where(audit_logs.c.entity_id == entity_id)
+        if action:
+            stmt = stmt.where(audit_logs.c.action == action)
+        stmt = stmt.order_by(audit_logs.c.timestamp.desc()).offset(offset).limit(limit)
+        rows = self._execute_fetchall(stmt)
+        return [self._row_to_audit_log(r) for r in rows]
+
+    def _row_to_user(self, row) -> User:
+        return User(
+            id=row.id,
+            username=row.username,
+            email=row.email,
+            password_hash=row.password_hash,
+            full_name=row.full_name or "",
+            is_active=row.is_active,
+            created_at=row.created_at,
+            metadata=row.metadata or {},
+        )
+
+    def _row_to_membership(self, row) -> OrganizationMembership:
+        return OrganizationMembership(
+            id=row.id,
+            user_id=row.user_id,
+            organization_id=row.organization_id,
+            role=row.role,
+            created_at=row.created_at,
+        )
+
+    def _row_to_audit_log(self, row) -> AuditLog:
+        return AuditLog(
+            id=row.id,
+            timestamp=row.timestamp,
+            actor_id=row.actor_id,
+            organization_id=row.organization_id,
+            action=row.action,
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            from_state=row.from_state,
+            to_state=row.to_state,
+            details=row.details or {},
+            ip_address=row.ip_address,
+        )
+
 
     def _row_geometry_to_wkt(self, row, col_name: str) -> Optional[str]:
         """Extract WKT from a PostGIS geometry column."""

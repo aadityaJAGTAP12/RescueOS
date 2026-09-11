@@ -6,6 +6,71 @@ Reuses existing field reports, deduplication, and evidence synthesis.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from agent.agents.base import AgentFinding, FindingProvenance, FindingSeverity
+from agent.agents.events import AgentEvent, AgentEventType
+
+
+class FieldAgent:
+    """
+    Network Specialist Agent responsible for clustering and deduplicating field reports.
+    """
+    agent_id: str = "network_specialist_field"
+    name: str = "Network Field Agent"
+    domain: str = "field"
+    allowed_context: list[str] = ["shared_state"]
+    allowed_tools: list[str] = ["field_intelligence_tool"]
+    accepted_event_types: list[str] = [
+        AgentEventType.FIELD_REPORT_CREATED.value,
+        AgentEventType.NEED_CREATED.value,
+    ]
+
+    def analyze(self, repo: Any) -> list[AgentFinding]:
+        """Run field intelligence analysis and return structured AgentFindings."""
+        raw = analyze_field_intelligence(repo)
+        findings: list[AgentFinding] = []
+
+        for f in raw.get("findings", []):
+            findings.append(
+                AgentFinding(
+                    agent_id=self.agent_id,
+                    domain=self.domain,
+                    finding_type=f.get("type", "field_finding"),
+                    summary=f.get("summary", f.get("title", "")),
+                    severity=f.get("severity", FindingSeverity.INFORMATION.value),
+                    confidence=0.8,
+                    provenance=FindingProvenance.USER_PROVIDED,
+                    evidence=raw.get("evidence", []),
+                    data_gaps=raw.get("data_gaps", []),
+                    uncertainty=raw.get("uncertainty", []),
+                    location=f.get("location"),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+
+        if not findings and raw.get("data_gaps"):
+            findings.append(
+                AgentFinding(
+                    agent_id=self.agent_id,
+                    domain=self.domain,
+                    finding_type="data_gap",
+                    summary="No community or field intelligence reports available",
+                    severity=FindingSeverity.INFORMATION.value,
+                    confidence=1.0,
+                    provenance=FindingProvenance.UNKNOWN,
+                    data_gaps=raw.get("data_gaps", []),
+                    uncertainty=raw.get("uncertainty", []),
+                )
+            )
+
+        return findings
+
+    def handle_event(self, event: AgentEvent, repo: Any) -> list[AgentFinding]:
+        """Process event related to new field reports."""
+        return self.analyze(repo)
+
 
 def analyze_field_intelligence(repo) -> dict:
     """

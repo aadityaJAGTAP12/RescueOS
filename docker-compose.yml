@@ -11,6 +11,7 @@ services:
   db:
     image: postgis/postgis:16-3.4
     container_name: reliefos-postgis
+    restart: unless-stopped
     environment:
       POSTGRES_DB: reliefos
       POSTGRES_USER: reliefos

@@ -20,8 +20,10 @@ Usage:
 
 import os
 import sys
+from dotenv import load_dotenv
 
-# Ensure project root is on path
+# Ensure project root is on path and load .env
+load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -63,6 +65,10 @@ def main():
     print("\n[3/3] Running data migration...")
     from agent.data.migration import run_full_migration
     summary = run_full_migration(repo)
+
+    # Step 4: Seed rich operational data (Needs, Offers, Operations)
+    from scripts.seed_operational_data import seed_operational_data
+    seed_operational_data()
 
     print("\n" + "=" * 60)
     print("Database initialization complete!")

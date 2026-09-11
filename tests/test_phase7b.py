@@ -13,7 +13,7 @@ Uses RELIEFOS_MEMORY=1 to ensure InMemoryRepository is used.
 # downgraded DATABASE_URL runs to memory mode (Item 5B finding).
 
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from agent.data.models import (
     Organization, Need, ResourceOffer, Operation, ActivityEvent, Notification,
@@ -435,7 +435,7 @@ class TestActivityEvent:
         event2 = ActivityEvent(
             id="evt_002", entity_type="need", entity_id="need_1",
             event_type="status_changed", actor="user1",
-            created_at=datetime(now.year, now.month, now.day, now.hour, now.minute + 1, tzinfo=timezone.utc),
+            created_at=now + timedelta(minutes=1),
         )
         fresh_repo.append_activity_event(event1)
         fresh_repo.append_activity_event(event2)

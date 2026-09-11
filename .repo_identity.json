@@ -1,7 +1,7 @@
 {
   "mode": "postgres",
   "counts_by_backend": {
-    "PostgresRepository": 394,
+    "PostgresRepository": 491,
     "InMemoryRepository": 244,
     "none": 1
   }

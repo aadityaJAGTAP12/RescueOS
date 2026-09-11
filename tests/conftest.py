@@ -6,6 +6,10 @@ accessibility so tests can run without Overpass or Ollama.
 """
 
 import os
+from dotenv import load_dotenv
+
+# Load environment variables before test mode resolution
+load_dotenv()
 
 import pytest
 

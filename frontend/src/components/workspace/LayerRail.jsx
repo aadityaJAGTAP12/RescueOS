@@ -50,6 +50,8 @@ function LayerToggle({ layer, active, onToggle, count }) {
   return (
     <button
       onClick={() => onToggle(layer.id)}
+      data-testid={`layer-${layer.id}`}
+      aria-pressed={active}
       className={cn(
         "w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-left transition-all duration-150 group",
         active
@@ -130,22 +132,151 @@ function FloodHistorySelector() {
 }
 
 export default function LayerRail() {
-  const { state, toggleLayer, openPanel, setFilter, fetchAiAnalysis } = useWorkspace();
+  const { state, toggleLayer, openPanel, closePanel, setFilter, fetchAiAnalysis } = useWorkspace();
   const [collapsed, setCollapsed] = useState(false);
 
-  // Handle AI Alerts toggle: if enabling, open the AI panel
+  // Handle Layer toggle: toggle layer and open corresponding contextual panel
   const handleLayerToggle = useCallback((layerId) => {
-    if (layerId === 'aiAlerts' && !state.layers.aiAlerts) {
-      // Turn on and open AI panel
-      toggleLayer('aiAlerts');
-      openPanel('aiAnalysis');
+    const isCurrentlyActive = state.layers[layerId];
+    const isPanelCurrentlyShowing = {
+      aiAlerts: state.panelType === 'aiAnalysis',
+      organizations: state.panelType === 'organizationsList',
+      fieldReports: state.panelType === 'reportsList',
+      overrides: state.panelType === 'overridesList',
+      needs: state.panelType === 'needsList',
+      offers: state.panelType === 'offersList',
+      operations: state.panelType === 'operationsList',
+    }[layerId];
+
+    if (layerId === 'aiAlerts') {
+      if (!isCurrentlyActive) {
+        toggleLayer('aiAlerts');
+        fetchAiAnalysis();
+        openPanel('aiAnalysis');
+      } else if (!isPanelCurrentlyShowing) {
+        fetchAiAnalysis();
+        openPanel('aiAnalysis');
+      } else {
+        toggleLayer('aiAlerts');
+        closePanel();
+      }
+    } else if (layerId === 'organizations') {
+      if (!isCurrentlyActive) {
+        toggleLayer('organizations');
+        openPanel('organizationsList');
+      } else if (!isPanelCurrentlyShowing) {
+        openPanel('organizationsList');
+      } else {
+        toggleLayer('organizations');
+        closePanel();
+      }
+    } else if (layerId === 'fieldReports') {
+      if (!isCurrentlyActive) {
+        toggleLayer('fieldReports');
+        openPanel('reportsList');
+      } else if (!isPanelCurrentlyShowing) {
+        openPanel('reportsList');
+      } else {
+        toggleLayer('fieldReports');
+        closePanel();
+      }
+    } else if (layerId === 'overrides') {
+      if (!isCurrentlyActive) {
+        toggleLayer('overrides');
+        openPanel('overridesList');
+      } else if (!isPanelCurrentlyShowing) {
+        openPanel('overridesList');
+      } else {
+        toggleLayer('overrides');
+        closePanel();
+      }
+    } else if (layerId === 'needs') {
+      if (!isCurrentlyActive) {
+        toggleLayer('needs');
+        openPanel('needsList');
+      } else if (!isPanelCurrentlyShowing) {
+        openPanel('needsList');
+      } else {
+        toggleLayer('needs');
+        closePanel();
+      }
+    } else if (layerId === 'offers') {
+      if (!isCurrentlyActive) {
+        toggleLayer('offers');
+        openPanel('offersList');
+      } else if (!isPanelCurrentlyShowing) {
+        openPanel('offersList');
+      } else {
+        toggleLayer('offers');
+        closePanel();
+      }
+    } else if (layerId === 'operations') {
+      if (!isCurrentlyActive) {
+        toggleLayer('operations');
+        openPanel('operationsList');
+      } else if (!isPanelCurrentlyShowing) {
+        openPanel('operationsList');
+      } else {
+        toggleLayer('operations');
+        closePanel();
+      }
     } else {
       toggleLayer(layerId);
     }
-  }, [state.layers.aiAlerts, toggleLayer, openPanel]);
+  }, [state.layers, state.panelType, toggleLayer, openPanel, closePanel, fetchAiAnalysis]);
 
-  // Compute entity counts (respect district filter)
+  const handleUrgencyClick = useCallback((u) => {
+    const nextUrgency = state.filters.urgency === u ? null : u;
+    setFilter('urgency', nextUrgency);
+    if (nextUrgency) {
+      if (!state.layers.needs) {
+        toggleLayer('needs');
+      }
+    }
+  }, [state.filters.urgency, state.layers.needs, setFilter, toggleLayer]);
+
+  const handleStatusClick = useCallback((s) => {
+    const nextStatus = state.filters.status === s ? null : s;
+    setFilter('status', nextStatus);
+    if (nextStatus) {
+      if (!state.layers.needs) toggleLayer('needs');
+      if (!state.layers.operations) toggleLayer('operations');
+    }
+  }, [state.filters.status, state.layers.needs, state.layers.operations, setFilter, toggleLayer]);
+
+  // Compute entity counts with active filters applied
   const districtFilter = state.filters.district;
+  const urgencyFilter = state.filters.urgency;
+  const statusFilter = state.filters.status;
+
+  const filteredNeeds = state.needs.filter((n) => {
+    if (districtFilter && n.district_id !== districtFilter) return false;
+    if (urgencyFilter && String(n.urgency).toLowerCase() !== String(urgencyFilter).toLowerCase()) return false;
+    if (statusFilter && String(n.status).toUpperCase() !== String(statusFilter).toUpperCase()) return false;
+    return true;
+  });
+
+  const filteredOperations = state.operations.filter((o) => {
+    if (districtFilter && o.district_id !== districtFilter) return false;
+    if (statusFilter) {
+      const statusMap = { OPEN: 'PLANNING', RESPONDING: 'ACTIVE', RESOLVED: 'COMPLETED' };
+      const target = statusMap[statusFilter] || statusFilter;
+      if (String(o.status).toUpperCase() !== target && !(statusFilter === 'RESPONDING' && String(o.status).toUpperCase() === 'PAUSED')) return false;
+    }
+    return true;
+  });
+
+  const filteredOffers = state.offers.filter((o) => {
+    if (districtFilter && o.district_id !== districtFilter) return false;
+    if (statusFilter) {
+      const statusMap = { OPEN: 'OFFERED', RESPONDING: 'ACCEPTED', RESOLVED: 'DEPLETED' };
+      const target = statusMap[statusFilter] || statusFilter;
+      const s = String(o.status).toUpperCase();
+      if (s !== target && !(statusFilter === 'RESPONDING' && s === 'DEPLOYED') && !(statusFilter === 'RESOLVED' && s === 'EXHAUSTED')) return false;
+    }
+    return true;
+  });
+
   const counts = {
     roads: districtFilter ? state.roads.filter(r => r.district_id === districtFilter).length : state.roads.length,
     bridges: districtFilter ? state.bridges.filter(b => b.district_id === districtFilter).length : state.bridges.length,
@@ -153,11 +284,13 @@ export default function LayerRail() {
     buildings: state.buildingsMeta?.total_available ?? state.buildings.length,
     medical: districtFilter ? state.medicalFacilities.filter(f => f.district_id === districtFilter).length : state.medicalFacilities.length,
     organizations: state.organizations.length,
-    needs: districtFilter ? state.needs.filter(n => n.district_id === districtFilter).length : state.needs.length,
-    offers: districtFilter ? state.offers.filter(o => o.district_id === districtFilter).length : state.offers.length,
-    operations: districtFilter ? state.operations.filter(o => o.district_id === districtFilter).length : state.operations.length,
+    needs: filteredNeeds.length,
+    offers: filteredOffers.length,
+    operations: filteredOperations.length,
     incidents: state.incidents.length,
     fieldReports: state.fieldReports.length,
+    overrides: Object.keys(state.overrides).length,
+    aiAlerts: state.aiAnalysis?.summary?.total ?? state.aiAnalysis?.findings?.length ?? 0,
     floodHistory: state.floodSnapshots.length,
   };
 
@@ -177,7 +310,7 @@ export default function LayerRail() {
             return (
               <button
                 key={layer.id}
-                onClick={() => toggleLayer(layer.id)}
+                onClick={() => handleLayerToggle(layer.id)}
                 className={cn(
                   "w-7 h-7 rounded flex items-center justify-center transition-colors",
                   active ? "bg-[#1a2332]" : "hover:bg-[#1a2332]/50"
@@ -239,7 +372,9 @@ export default function LayerRail() {
           {['critical', 'high', 'medium', 'low'].map(u => (
             <button
               key={u}
-              onClick={() => setFilter('urgency', state.filters.urgency === u ? null : u)}
+              onClick={() => handleUrgencyClick(u)}
+              data-testid={`urgency-${u}`}
+              aria-pressed={state.filters.urgency === u}
               className={cn(
                 'px-1.5 py-0.5 rounded text-[9px] font-medium border transition-colors',
                 state.filters.urgency === u
@@ -261,7 +396,9 @@ export default function LayerRail() {
           {['OPEN', 'RESPONDING', 'RESOLVED'].map(s => (
             <button
               key={s}
-              onClick={() => setFilter('status', state.filters.status === s ? null : s)}
+              onClick={() => handleStatusClick(s)}
+              data-testid={`status-${s.toLowerCase()}`}
+              aria-pressed={state.filters.status === s}
               className={cn(
                 'px-1.5 py-0.5 rounded text-[9px] font-medium border transition-colors',
                 state.filters.status === s

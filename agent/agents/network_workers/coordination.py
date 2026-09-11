@@ -7,6 +7,59 @@ duplicate responses, and coordination opportunities.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from agent.agents.base import AgentFinding, FindingProvenance, FindingSeverity
+from agent.agents.events import AgentEvent, AgentEventType
+
+
+class CoordinationAgent:
+    """
+    Network Specialist Agent responsible for evaluating multi-organization coordination opportunities.
+    """
+    agent_id: str = "network_specialist_coordination"
+    name: str = "Network Coordination Agent"
+    domain: str = "coordination"
+    allowed_context: list[str] = ["shared_state"]
+    allowed_tools: list[str] = ["matching_core"]
+    accepted_event_types: list[str] = [
+        AgentEventType.NEED_CREATED.value,
+        AgentEventType.OFFER_CREATED.value,
+        AgentEventType.COORDINATION_PROPOSAL_CREATED.value,
+    ]
+
+    def analyze(self, repo: Any) -> list[AgentFinding]:
+        """Run coordination analysis and return structured AgentFindings."""
+        raw = analyze_coordination(repo)
+        findings: list[AgentFinding] = []
+
+        for f in raw.get("findings", []):
+            findings.append(
+                AgentFinding(
+                    agent_id=self.agent_id,
+                    domain=self.domain,
+                    finding_type=f.get("type", "coordination_finding"),
+                    summary=f.get("summary", f.get("title", "")),
+                    severity=f.get("severity", FindingSeverity.INFORMATION.value),
+                    confidence=0.9,
+                    provenance=FindingProvenance.OBSERVED,
+                    evidence=raw.get("evidence", []),
+                    data_gaps=raw.get("data_gaps", []),
+                    uncertainty=raw.get("uncertainty", []),
+                    related_entity_type=f.get("entity_type"),
+                    related_entity_id=f.get("entity_id"),
+                    location=f.get("location"),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+
+        return findings
+
+    def handle_event(self, event: AgentEvent, repo: Any) -> list[AgentFinding]:
+        """Process event related to coordination."""
+        return self.analyze(repo)
+
 
 def analyze_coordination(repo) -> dict:
     """

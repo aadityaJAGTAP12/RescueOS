@@ -102,7 +102,26 @@ def apply_override(
         "active": True,
     }
 
-    _get_repo().upsert_override(_record_to_model(record))
+    repo = _get_repo()
+    repo.upsert_override(_record_to_model(record))
+
+    # Emit machine-facing AgentEvent
+    try:
+        from agent.agents.events import make_road_override_event, make_bridge_override_event
+        if target_type == "road":
+            repo.append_agent_event(make_road_override_event(
+                override_id=record["id"],
+                target_id=target_id,
+                metadata={"new_status": new_status, "reason": reason, "actor": actor},
+            ))
+        elif target_type in ("bridge", "facility"):
+            repo.append_agent_event(make_bridge_override_event(
+                override_id=record["id"],
+                target_id=target_id,
+                metadata={"new_status": new_status, "reason": reason, "actor": actor},
+            ))
+    except Exception:
+        pass
 
     return record
 

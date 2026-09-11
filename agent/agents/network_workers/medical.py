@@ -7,6 +7,72 @@ Uses cautious language — never claims outbreaks without evidence.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from agent.agents.base import AgentFinding, FindingProvenance, FindingSeverity
+from agent.agents.events import AgentEvent, AgentEventType
+
+
+class MedicalAgent:
+    """
+    Network Specialist Agent responsible for evaluating medical urgency and facility readiness.
+    """
+    agent_id: str = "network_specialist_medical"
+    name: str = "Network Medical Agent"
+    domain: str = "medical"
+    allowed_context: list[str] = ["shared_state"]
+    allowed_tools: list[str] = ["field_intelligence_tool"]
+    accepted_event_types: list[str] = [
+        AgentEventType.NEED_CREATED.value,
+        AgentEventType.FIELD_REPORT_CREATED.value,
+        AgentEventType.ROAD_OVERRIDE_APPLIED.value,
+    ]
+
+    def analyze(self, repo: Any) -> list[AgentFinding]:
+        """Run medical situation analysis and return structured AgentFindings."""
+        raw = analyze_medical(repo)
+        findings: list[AgentFinding] = []
+
+        for f in raw.get("findings", []):
+            findings.append(
+                AgentFinding(
+                    agent_id=self.agent_id,
+                    domain=self.domain,
+                    finding_type=f.get("type", "medical_concern"),
+                    summary=f.get("summary", f.get("title", "")),
+                    severity=f.get("severity", FindingSeverity.URGENT.value),
+                    confidence=0.8,
+                    provenance=FindingProvenance.OBSERVED,
+                    evidence=raw.get("evidence", []),
+                    data_gaps=raw.get("data_gaps", []),
+                    uncertainty=raw.get("uncertainty", []),
+                    location=f.get("location"),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+
+        if not findings and raw.get("data_gaps"):
+            findings.append(
+                AgentFinding(
+                    agent_id=self.agent_id,
+                    domain=self.domain,
+                    finding_type="data_gap",
+                    summary="Medical facility or disease intelligence data missing",
+                    severity=FindingSeverity.INFORMATION.value,
+                    confidence=1.0,
+                    provenance=FindingProvenance.UNKNOWN,
+                    data_gaps=raw.get("data_gaps", []),
+                    uncertainty=raw.get("uncertainty", []),
+                )
+            )
+
+        return findings
+
+    def handle_event(self, event: AgentEvent, repo: Any) -> list[AgentFinding]:
+        """Process event related to medical urgency."""
+        return self.analyze(repo)
+
 
 def analyze_medical(repo) -> dict:
     """

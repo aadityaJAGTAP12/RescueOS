@@ -6,6 +6,63 @@ Reuses existing road status, bridge status, overrides, and routing capabilities.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from agent.agents.base import AgentFinding, FindingProvenance, FindingSeverity
+from agent.agents.events import AgentEvent, AgentEventType
+
+
+class AccessAgent:
+    """
+    Network Specialist Agent responsible for evaluating road closures and routing feasibility.
+    """
+    agent_id: str = "network_specialist_access"
+    name: str = "Network Access Agent"
+    domain: str = "access"
+    allowed_context: list[str] = ["shared_state"]
+    allowed_tools: list[str] = ["road_status_tool", "routing_tool", "accessibility_tool"]
+    accepted_event_types: list[str] = [
+        AgentEventType.ROAD_OVERRIDE_APPLIED.value,
+        AgentEventType.BRIDGE_OVERRIDE_APPLIED.value,
+        AgentEventType.OPERATION_CREATED.value,
+    ]
+
+    def analyze(self, repo: Any) -> list[AgentFinding]:
+        """Run access analysis and return structured AgentFindings."""
+        raw = analyze_access(repo)
+        findings: list[AgentFinding] = []
+
+        for f in raw.get("findings", []):
+            findings.append(
+                AgentFinding(
+                    agent_id=self.agent_id,
+                    domain=self.domain,
+                    finding_type=f.get("type", "access_blocked"),
+                    summary=f.get("summary", f.get("title", "")),
+                    severity=f.get("severity", FindingSeverity.URGENT.value),
+                    confidence=0.95,
+                    provenance=FindingProvenance.USER_PROVIDED,
+                    evidence=raw.get("evidence", []),
+                    data_gaps=raw.get("data_gaps", []),
+                    uncertainty=raw.get("uncertainty", []),
+                    location=f.get("location"),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+
+        return findings
+
+    def handle_event(self, event: AgentEvent, repo: Any) -> list[AgentFinding]:
+        """Process event related to road or bridge overrides."""
+        all_findings = self.analyze(repo)
+        target_id = event.metadata.get("target_id")
+        if target_id:
+            specific = [f for f in all_findings if f.location == target_id]
+            if specific:
+                return specific
+        return all_findings
+
 
 def analyze_access(repo) -> dict:
     """

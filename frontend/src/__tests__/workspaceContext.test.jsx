@@ -538,4 +538,64 @@ describe('Phase 7B.1 — Functional Shell', () => {
     });
     expect(capturedState.layers.medical).toBe(false);
   });
+
+  // Tests: Pinpoint Mode (Osiris / World Monitor map picker)
+  it('Pinpoint mode can be activated, sets coordinates, and can be cancelled or cleared', async () => {
+    let capturedState;
+    let helpers;
+
+    function PinpointTest() {
+      const workspace = useWorkspace();
+      capturedState = workspace.state;
+      helpers = workspace;
+      return <div />;
+    }
+
+    render(
+      <WorkspaceProvider>
+        <PinpointTest />
+      </WorkspaceProvider>
+    );
+
+    // Initial pinpoint state is inactive
+    expect(capturedState.pinpointMode.active).toBe(false);
+    expect(capturedState.pinpointMode.formType).toBeNull();
+    expect(capturedState.pinpointMode.coords).toBeNull();
+
+    // Start pinpointing for a need
+    act(() => {
+      helpers.startPinpoint('need');
+    });
+
+    expect(capturedState.pinpointMode.active).toBe(true);
+    expect(capturedState.pinpointMode.formType).toBe('need');
+
+    // Pick coordinates on map
+    act(() => {
+      helpers.setPinpointCoords({ lat: 26.851234, lon: 94.354321 });
+    });
+
+    expect(capturedState.pinpointMode.active).toBe(false);
+    expect(capturedState.pinpointMode.formType).toBe('need');
+    expect(capturedState.pinpointMode.coords).toEqual({ lat: 26.851234, lon: 94.354321 });
+
+    // Cancel pinpointing
+    act(() => {
+      helpers.startPinpoint('operation');
+    });
+    expect(capturedState.pinpointMode.active).toBe(true);
+    expect(capturedState.pinpointMode.formType).toBe('operation');
+
+    act(() => {
+      helpers.cancelPinpoint();
+    });
+    expect(capturedState.pinpointMode.active).toBe(false);
+
+    // Clear pinpoint
+    act(() => {
+      helpers.clearPinpoint();
+    });
+    expect(capturedState.pinpointMode.coords).toBeNull();
+    expect(capturedState.pinpointMode.formType).toBeNull();
+  });
 });

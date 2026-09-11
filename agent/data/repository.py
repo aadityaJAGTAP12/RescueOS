@@ -12,11 +12,14 @@ Key principle: Tools never touch storage directly. They go through
 the repository interface, which makes the data source swappable.
 """
 
-from __future__ import annotations
-
+import os
 import math
 from datetime import datetime, timezone
 from typing import Optional
+from dotenv import load_dotenv
+
+# Automatically load environment variables from .env file at repo root
+load_dotenv()
 
 from agent.data.models import (
     District,
@@ -36,6 +39,14 @@ from agent.data.models import (
     Operation,
     ActivityEvent,
     Notification,
+    AgentEvent,
+    AgentEventType,
+    EventStatus,
+    ProactiveScan,
+    ProactiveFinding,
+    User,
+    OrganizationMembership,
+    AuditLog,
 )
 
 
@@ -239,6 +250,10 @@ class DataRepository:
     def create_notification(self, notification: Notification) -> Notification:
         raise NotImplementedError
 
+    def get_notification(self, notification_id: str) -> Optional[Notification]:
+        """Fetch a single notification by id, or None."""
+        raise NotImplementedError
+
     def list_notifications(self, recipient_id: str, unread_only: bool = False, limit: int = 50) -> list[Notification]:
         raise NotImplementedError
 
@@ -266,6 +281,168 @@ class DataRepository:
         when the current status matches (atomic single-row guard). Returns the
         updated proposal or None when not found / guard not met."""
         raise NotImplementedError
+
+    # --- Agent Events / Outbox (Phase 2A) ---
+
+    def append_agent_event(self, event: AgentEvent) -> AgentEvent:
+        """Persist a machine-facing agent event to the outbox."""
+        raise NotImplementedError
+
+    def get_agent_event(self, event_id: str) -> Optional[AgentEvent]:
+        """Retrieve an agent event by ID."""
+        raise NotImplementedError
+
+    def list_agent_events(
+        self,
+        status: Optional[str] = None,
+        event_type: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[AgentEvent]:
+        """List agent events with optional filtering."""
+        raise NotImplementedError
+
+    def update_agent_event_status(
+        self,
+        event_id: str,
+        status: str,
+        processed_at: Optional[datetime] = None,
+        error_detail: Optional[str] = None,
+        execution_result: Optional[dict] = None,
+    ) -> Optional[AgentEvent]:
+        """Update an agent event's processing status and execution results."""
+        raise NotImplementedError
+
+    def claim_pending_agent_events(self, limit: int = 10) -> list[AgentEvent]:
+        """Atomically claim pending agent events for dispatch."""
+        raise NotImplementedError
+
+    # --- Proactive Scans & Findings (Phase 2B) ---
+
+    def create_proactive_scan(self, scan: ProactiveScan) -> ProactiveScan:
+        """Create a new proactive scan record."""
+        raise NotImplementedError
+
+    def get_proactive_scan(self, scan_id: str) -> Optional[ProactiveScan]:
+        """Retrieve a proactive scan by ID."""
+        raise NotImplementedError
+
+    def list_proactive_scans(
+        self,
+        status: Optional[str] = None,
+        trigger: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[ProactiveScan]:
+        """List proactive scans with optional filtering."""
+        raise NotImplementedError
+
+    def update_proactive_scan(
+        self,
+        scan_id: str,
+        status: Optional[str] = None,
+        completed_at: Optional[datetime] = None,
+        findings_count: Optional[int] = None,
+        summary: Optional[str] = None,
+        metrics: Optional[dict] = None,
+        failures: Optional[list] = None,
+        detectors_run: Optional[list] = None,
+        specialists_invoked: Optional[list] = None,
+    ) -> Optional[ProactiveScan]:
+        """Update a proactive scan's status and results."""
+        raise NotImplementedError
+
+    def upsert_proactive_finding(self, finding: ProactiveFinding) -> ProactiveFinding:
+        """Upsert a proactive finding by fingerprint or ID."""
+        raise NotImplementedError
+
+    def get_proactive_finding(self, finding_id: str) -> Optional[ProactiveFinding]:
+        """Retrieve a proactive finding by ID."""
+        raise NotImplementedError
+
+    def get_proactive_finding_by_fingerprint(self, fingerprint: str) -> Optional[ProactiveFinding]:
+        """Retrieve the most recent proactive finding with given fingerprint."""
+        raise NotImplementedError
+
+    def list_proactive_findings(
+        self,
+        status: Optional[str] = None,
+        domain: Optional[str] = None,
+        severity: Optional[str] = None,
+        scan_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[ProactiveFinding]:
+        """List proactive findings with optional filtering."""
+        raise NotImplementedError
+
+    def recover_stale_agent_events(self, stale_threshold_seconds: int = 300) -> list[AgentEvent]:
+        """Recover events stuck in CLAIMED/PROCESSING beyond timeout threshold."""
+        raise NotImplementedError
+
+    # --- Authentication & Authorization (Production Hardening) ---
+
+    def create_user(self, user: User) -> User:
+        """Create a new user record."""
+        raise NotImplementedError
+
+    def get_user_by_id(self, user_id: str) -> Optional[User]:
+        """Retrieve a user by ID."""
+        raise NotImplementedError
+
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        """Retrieve a user by username."""
+        raise NotImplementedError
+
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        """Retrieve a user by email."""
+        raise NotImplementedError
+
+    def update_user(self, user: User) -> Optional[User]:
+        """Update an existing user."""
+        raise NotImplementedError
+
+    def list_users(self, limit: int = 100) -> list[User]:
+        """List users."""
+        raise NotImplementedError
+
+    def create_membership(self, membership: OrganizationMembership) -> OrganizationMembership:
+        """Create or update an organization membership."""
+        raise NotImplementedError
+
+    def get_membership(self, user_id: str, organization_id: str) -> Optional[OrganizationMembership]:
+        """Get membership for a specific user and organization."""
+        raise NotImplementedError
+
+    def list_memberships_for_user(self, user_id: str) -> list[OrganizationMembership]:
+        """List all organization memberships for a user."""
+        raise NotImplementedError
+
+    def list_memberships_for_org(self, organization_id: str) -> list[OrganizationMembership]:
+        """List all memberships for an organization."""
+        raise NotImplementedError
+
+    def delete_membership(self, user_id: str, organization_id: str) -> bool:
+        """Delete an organization membership."""
+        raise NotImplementedError
+
+    # --- Consequential Action Audit Logs (Production Hardening) ---
+
+    def create_audit_log(self, log: AuditLog) -> AuditLog:
+        """Record an immutable audit log entry."""
+        raise NotImplementedError
+
+    def list_audit_logs(
+        self,
+        actor_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        action: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AuditLog]:
+        """List audit logs with optional filters."""
+        raise NotImplementedError
+
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +476,15 @@ class InMemoryRepository(DataRepository):
         self._notifications: dict[str, Notification] = {}
         # Item #5 Step 2: coordination proposals (plain dicts, Phase 7H schema)
         self._proposals: dict[str, dict] = {}
+        # Phase 2A: Agent events outbox
+        self._agent_events: dict[str, AgentEvent] = {}
+        # Phase 2B: Proactive scans & findings
+        self._proactive_scans: dict[str, ProactiveScan] = {}
+        self._proactive_findings: dict[str, ProactiveFinding] = {}
+        # Production Hardening: Auth & Audit
+        self._users: dict[str, User] = {}
+        self._memberships: dict[str, OrganizationMembership] = {}
+        self._audit_logs: list[AuditLog] = []
 
     def clear(self):
         """Reset all data (for testing)."""
@@ -318,6 +504,13 @@ class InMemoryRepository(DataRepository):
         self._activity_events.clear()
         self._notifications.clear()
         self._proposals.clear()
+        self._agent_events.clear()
+        self._proactive_scans.clear()
+        self._proactive_findings.clear()
+        self._users.clear()
+        self._memberships.clear()
+        self._audit_logs.clear()
+
 
     # --- Districts ---
 
@@ -563,6 +756,16 @@ class InMemoryRepository(DataRepository):
             provenance=Provenance.REAL,
         )
         self.upsert_flood_snapshot(snapshot)
+        try:
+            from agent.agents.events import make_flood_snapshot_event
+            self.append_agent_event(make_flood_snapshot_event(
+                snapshot_id=snapshot.id,
+                district=district_id,
+                priority="urgent",
+                metadata={"polygon_count": len(features), "source": source},
+            ))
+        except Exception:
+            pass
         return snapshot
 
     # --- Organizations (Phase 7B) ---
@@ -595,11 +798,11 @@ class InMemoryRepository(DataRepository):
     def list_needs(self, district_id: str = None, status: str = None, urgency: str = None) -> list[Need]:
         results = list(self._needs.values())
         if district_id:
-            results = [n for n in results if n.district_id == district_id]
+            results = [n for n in results if n.district_id and n.district_id.lower() == district_id.lower()]
         if status:
-            results = [n for n in results if n.status == status]
+            results = [n for n in results if n.status and n.status.lower() == status.lower()]
         if urgency:
-            results = [n for n in results if n.urgency == urgency]
+            results = [n for n in results if n.urgency and n.urgency.lower() == urgency.lower()]
         return results
 
     def update_need(self, need: Need) -> None:
@@ -628,11 +831,11 @@ class InMemoryRepository(DataRepository):
         if organization_id:
             results = [o for o in results if o.organization_id == organization_id]
         if district_id:
-            results = [o for o in results if o.district_id == district_id]
+            results = [o for o in results if o.district_id and o.district_id.lower() == district_id.lower()]
         if status:
-            results = [o for o in results if o.status == status]
+            results = [o for o in results if o.status and o.status.lower() == status.lower()]
         if resource_type:
-            results = [o for o in results if o.resource_type == resource_type]
+            results = [o for o in results if o.resource_type and o.resource_type.lower() == resource_type.lower()]
         return results
 
     def update_resource_offer(self, offer: ResourceOffer) -> None:
@@ -650,9 +853,9 @@ class InMemoryRepository(DataRepository):
     def list_operations(self, district_id: str = None, status: str = None, lead_organization_id: str = None) -> list[Operation]:
         results = list(self._operations.values())
         if district_id:
-            results = [o for o in results if o.district_id == district_id]
+            results = [o for o in results if o.district_id and o.district_id.lower() == district_id.lower()]
         if status:
-            results = [o for o in results if o.status == status]
+            results = [o for o in results if o.status and o.status.lower() == status.lower()]
         if lead_organization_id:
             results = [o for o in results if o.lead_organization_id == lead_organization_id]
         return results
@@ -694,6 +897,9 @@ class InMemoryRepository(DataRepository):
     def create_notification(self, notification: Notification) -> Notification:
         self._notifications[notification.id] = notification
         return notification
+
+    def get_notification(self, notification_id: str) -> Optional[Notification]:
+        return self._notifications.get(notification_id)
 
     def list_notifications(self, recipient_id: str, unread_only: bool = False, limit: int = 50) -> list[Notification]:
         results = [n for n in self._notifications.values() if n.recipient_id == recipient_id]
@@ -749,6 +955,305 @@ class InMemoryRepository(DataRepository):
         updated["updated_at"] = datetime.now(timezone.utc).isoformat()
         self._proposals[proposal_id] = updated
         return updated
+
+    # --- Agent Events / Outbox (Phase 2A) ---
+
+    def append_agent_event(self, event: AgentEvent) -> AgentEvent:
+        """Persist a machine-facing agent event."""
+        if not event.event_id:
+            import uuid
+            event.event_id = f"evt_{str(uuid.uuid4())[:12]}"
+        if not event.created_at:
+            event.created_at = datetime.now(timezone.utc).isoformat()
+        self._agent_events[event.event_id] = event
+        return event
+
+    def get_agent_event(self, event_id: str) -> Optional[AgentEvent]:
+        """Retrieve an agent event by ID."""
+        return self._agent_events.get(event_id)
+
+    def list_agent_events(
+        self,
+        status: Optional[str] = None,
+        event_type: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[AgentEvent]:
+        """List agent events with optional filtering."""
+        results = list(self._agent_events.values())
+        if status:
+            results = [e for e in results if (e.status == status or (hasattr(e.status, "value") and e.status.value == status))]
+        if event_type:
+            results = [e for e in results if e.event_type == event_type]
+        if entity_type:
+            results = [e for e in results if e.entity_type == entity_type]
+        results.sort(key=lambda e: e.created_at or "", reverse=True)
+        return results[:limit]
+
+    def update_agent_event_status(
+        self,
+        event_id: str,
+        status: str,
+        processed_at: Optional[datetime] = None,
+        error_detail: Optional[str] = None,
+        execution_result: Optional[dict] = None,
+    ) -> Optional[AgentEvent]:
+        """Update status and outcome of an agent event."""
+        evt = self._agent_events.get(event_id)
+        if not evt:
+            return None
+        evt.status = status
+        if processed_at:
+            evt.processed_at = processed_at.isoformat() if hasattr(processed_at, "isoformat") else str(processed_at)
+        elif status in (EventStatus.PROCESSED.value, EventStatus.FAILED.value, EventStatus.SKIPPED_DUPLICATE.value):
+            evt.processed_at = datetime.now(timezone.utc).isoformat()
+        if error_detail is not None:
+            evt.error_detail = error_detail
+        if execution_result is not None:
+            evt.execution_result = execution_result
+        return evt
+
+    def claim_pending_agent_events(self, limit: int = 10) -> list[AgentEvent]:
+        """Atomically claim pending agent events for dispatch."""
+        pending = [
+            e for e in self._agent_events.values()
+            if e.status in (EventStatus.PENDING.value, "PENDING")
+        ]
+        # Sort oldest first for FIFO processing
+        pending.sort(key=lambda e: e.created_at or "")
+        claimed = pending[:limit]
+        for e in claimed:
+            e.status = EventStatus.CLAIMED.value
+            e.claimed_at = datetime.now(timezone.utc).isoformat()
+        return claimed
+
+    # --- Proactive Scans & Findings (Phase 2B) ---
+
+    def create_proactive_scan(self, scan: ProactiveScan) -> ProactiveScan:
+        self._proactive_scans[scan.id] = scan
+        return scan
+
+    def get_proactive_scan(self, scan_id: str) -> Optional[ProactiveScan]:
+        return self._proactive_scans.get(scan_id)
+
+    def list_proactive_scans(
+        self,
+        status: Optional[str] = None,
+        trigger: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[ProactiveScan]:
+        scans = list(self._proactive_scans.values())
+        if status:
+            scans = [s for s in scans if (s.status if isinstance(s.status, str) else s.status.value) == status]
+        if trigger:
+            scans = [s for s in scans if s.trigger == trigger]
+        scans.sort(key=lambda s: s.started_at or datetime.min, reverse=True)
+        return scans[:limit]
+
+    def update_proactive_scan(
+        self,
+        scan_id: str,
+        status: Optional[str] = None,
+        completed_at: Optional[datetime] = None,
+        findings_count: Optional[int] = None,
+        summary: Optional[str] = None,
+        metrics: Optional[dict] = None,
+        failures: Optional[list] = None,
+        detectors_run: Optional[list] = None,
+        specialists_invoked: Optional[list] = None,
+    ) -> Optional[ProactiveScan]:
+        scan = self._proactive_scans.get(scan_id)
+        if not scan:
+            return None
+        if status is not None:
+            scan.status = status
+        if completed_at is not None:
+            scan.completed_at = completed_at
+        if findings_count is not None:
+            scan.findings_count = findings_count
+        if summary is not None:
+            scan.summary = summary
+        if metrics is not None:
+            scan.metrics = metrics
+        if failures is not None:
+            scan.failures = failures
+        if detectors_run is not None:
+            scan.detectors_run = detectors_run
+        if specialists_invoked is not None:
+            scan.specialists_invoked = specialists_invoked
+        return scan
+
+    def upsert_proactive_finding(self, finding: ProactiveFinding) -> ProactiveFinding:
+        # Check if finding with same fingerprint exists
+        existing = self.get_proactive_finding_by_fingerprint(finding.fingerprint)
+        if existing:
+            # Update mutable fields
+            existing.scan_id = finding.scan_id
+            existing.status = finding.status
+            existing.severity = finding.severity
+            existing.title = finding.title
+            existing.summary = finding.summary
+            existing.evidence = finding.evidence
+            existing.provenance = finding.provenance
+            existing.uncertainty = finding.uncertainty
+            existing.data_gaps = finding.data_gaps
+            existing.suggested_action = finding.suggested_action
+            existing.last_detected_at = finding.last_detected_at or datetime.now(timezone.utc)
+            if finding.resolved_at is not None:
+                existing.resolved_at = finding.resolved_at
+            if finding.notification_sent_at is not None:
+                existing.notification_sent_at = finding.notification_sent_at
+            if finding.severity_history:
+                existing.severity_history = finding.severity_history
+            return existing
+        else:
+            self._proactive_findings[finding.id] = finding
+            return finding
+
+    def get_proactive_finding(self, finding_id: str) -> Optional[ProactiveFinding]:
+        return self._proactive_findings.get(finding_id)
+
+    def get_proactive_finding_by_fingerprint(self, fingerprint: str) -> Optional[ProactiveFinding]:
+        for f in self._proactive_findings.values():
+            if f.fingerprint == fingerprint:
+                return f
+        return None
+
+    def list_proactive_findings(
+        self,
+        status: Optional[str] = None,
+        domain: Optional[str] = None,
+        severity: Optional[str] = None,
+        scan_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[ProactiveFinding]:
+        findings = list(self._proactive_findings.values())
+        if status:
+            findings = [f for f in findings if (f.status if isinstance(f.status, str) else f.status.value) == status]
+        if domain:
+            findings = [f for f in findings if f.domain == domain]
+        if severity:
+            findings = [f for f in findings if f.severity == severity]
+        if scan_id:
+            findings = [f for f in findings if f.scan_id == scan_id]
+        findings.sort(key=lambda f: f.last_detected_at or datetime.min, reverse=True)
+        return findings[:limit]
+
+    # --- Stale Event Recovery (Production Hardening) ---
+
+    def recover_stale_agent_events(self, stale_threshold_seconds: int = 300) -> list[AgentEvent]:
+        now = datetime.now(timezone.utc)
+        recovered = []
+        for e in self._agent_events.values():
+            if e.status in (EventStatus.CLAIMED.value, EventStatus.PROCESSING.value):
+                # Prefer claimed_at; fall back to created_at for legacy events.
+                stamp = e.claimed_at or e.created_at
+                try:
+                    dt = datetime.fromisoformat(stamp) if stamp else now
+                except (TypeError, ValueError):
+                    dt = now
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if (now - dt).total_seconds() >= stale_threshold_seconds:
+                    if (e.retry_count or 0) < (e.max_retries or 3):
+                        e.retry_count = (e.retry_count or 0) + 1
+                        e.status = EventStatus.PENDING.value
+                        recovered.append(e)
+                    else:
+                        e.status = EventStatus.FAILED.value
+                        e.error_detail = "Max retries exceeded after stale worker timeout"
+                        e.processed_at = now.isoformat()
+        return recovered
+
+    # --- Authentication & Authorization (Production Hardening) ---
+
+    def create_user(self, user: User) -> User:
+        self._users[user.id] = user
+        return user
+
+    def get_user_by_id(self, user_id: str) -> Optional[User]:
+        return self._users.get(user_id)
+
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        for u in self._users.values():
+            if u.username.lower() == username.lower():
+                return u
+        return None
+
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        for u in self._users.values():
+            if u.email.lower() == email.lower():
+                return u
+        return None
+
+    def update_user(self, user: User) -> Optional[User]:
+        if user.id in self._users:
+            self._users[user.id] = user
+            return user
+        return None
+
+    def list_users(self, limit: int = 100) -> list[User]:
+        return list(self._users.values())[:limit]
+
+    def create_membership(self, membership: OrganizationMembership) -> OrganizationMembership:
+        # Upsert by (user_id, organization_id)
+        existing = self.get_membership(membership.user_id, membership.organization_id)
+        if existing:
+            existing.role = membership.role
+            return existing
+        self._memberships[membership.id] = membership
+        return membership
+
+    def get_membership(self, user_id: str, organization_id: str) -> Optional[OrganizationMembership]:
+        for m in self._memberships.values():
+            if m.user_id == user_id and m.organization_id == organization_id:
+                return m
+        return None
+
+    def list_memberships_for_user(self, user_id: str) -> list[OrganizationMembership]:
+        return [m for m in self._memberships.values() if m.user_id == user_id]
+
+    def list_memberships_for_org(self, organization_id: str) -> list[OrganizationMembership]:
+        return [m for m in self._memberships.values() if m.organization_id == organization_id]
+
+    def delete_membership(self, user_id: str, organization_id: str) -> bool:
+        to_del = [k for k, m in self._memberships.items() if m.user_id == user_id and m.organization_id == organization_id]
+        if not to_del:
+            return False
+        for k in to_del:
+            del self._memberships[k]
+        return True
+
+    # --- Consequential Action Audit Logs (Production Hardening) ---
+
+    def create_audit_log(self, log: AuditLog) -> AuditLog:
+        self._audit_logs.append(log)
+        return log
+
+    def list_audit_logs(
+        self,
+        actor_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        action: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AuditLog]:
+        logs = list(self._audit_logs)
+        if actor_id:
+            logs = [l for l in logs if l.actor_id == actor_id]
+        if organization_id:
+            logs = [l for l in logs if l.organization_id == organization_id]
+        if entity_type:
+            logs = [l for l in logs if l.entity_type == entity_type]
+        if entity_id:
+            logs = [l for l in logs if l.entity_id == entity_id]
+        if action:
+            logs = [l for l in logs if l.action == action]
+        logs.sort(key=lambda l: l.timestamp or datetime.min, reverse=True)
+        return logs[offset : offset + limit]
+
 
 
 # ---------------------------------------------------------------------------
@@ -842,6 +1347,8 @@ def get_repository() -> DataRepository:
             return _default_repository
 
     # Default: InMemoryRepository (safe for tests and development)
+    if memory_mode not in ("1", "true", "yes"):
+        print("  [REPOSITORY WARNING] DATABASE_URL not set — running with InMemoryRepository fallback (multi-district data missing)")
     _default_repository = InMemoryRepository()
     return _default_repository
 

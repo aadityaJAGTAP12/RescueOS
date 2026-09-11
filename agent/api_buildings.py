@@ -104,7 +104,9 @@ def register_building_routes(app):
                 },
             })
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            import logging
+            logging.getLogger("reliefos.api").warning("buildings endpoint error (%s)", type(e).__name__, exc_info=True)
+            return jsonify({"error": "InternalError: internal error"}), 500
 
     @app.route("/api/districts/<district_id>/buildings/count", methods=["GET"])
     def api_district_buildings_count(district_id):
@@ -118,7 +120,9 @@ def register_building_routes(app):
                 "district_id": district_id,
             })
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            import logging
+            logging.getLogger("reliefos.api").warning("buildings endpoint error (%s)", type(e).__name__, exc_info=True)
+            return jsonify({"error": "InternalError: internal error"}), 500
 
 
 def _bbox_radius_km(west, south, east, north):

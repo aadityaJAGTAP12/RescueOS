@@ -403,10 +403,178 @@ coordination_proposals = Table(
     ),
 )
 
+# Phase 2A: Persistent Agent Events / Outbox Table
+agent_events = Table(
+    "agent_events",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("event_type", String(128), nullable=False),
+    Column("entity_type", String(128), nullable=False),
+    Column("entity_id", String(256), nullable=False),
+    Column("status", String(64), nullable=False, server_default="PENDING"),
+    Column("priority", String(64), nullable=False, server_default="urgent"),
+    Column("source", String(256), nullable=False, server_default="system"),
+    Column("district", String(128), nullable=True),
+    Column("organization_id", String(256), nullable=True),
+    Column("metadata", JSON, nullable=False, server_default="{}"),
+    Column("retry_count", Integer, nullable=False, server_default="0"),
+    Column("max_retries", Integer, nullable=False, server_default="3"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("claimed_at", DateTime(timezone=True), nullable=True),
+    Column("processed_at", DateTime(timezone=True), nullable=True),
+    Column("error_detail", Text, nullable=True),
+    Column("execution_result", JSON, nullable=True),
+    Index("ix_agent_events_status", "status"),
+    Index("ix_agent_events_created_at", "created_at"),
+    Index("ix_agent_events_claimed_at", "claimed_at"),
+    Index("ix_agent_events_event_type", "event_type"),
+    Index("ix_agent_events_entity", "entity_type", "entity_id"),
+    CheckConstraint(
+        "status IN ('PENDING', 'CLAIMED', 'PROCESSING', 'PROCESSED', 'FAILED', 'SKIPPED_DUPLICATE')",
+        name="ck_agent_events_status"
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Proactive Intelligence (Phase 2B)
+# ---------------------------------------------------------------------------
+
+proactive_scans = Table(
+    "proactive_scans",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("started_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("trigger", String(64), nullable=False, server_default="scheduled"),
+    Column("status", String(32), nullable=False, server_default="RUNNING"),
+    Column("scope", JSON, nullable=True),
+    Column("detectors_run", JSON, nullable=False, server_default="[]"),
+    Column("specialists_invoked", JSON, nullable=False, server_default="[]"),
+    Column("findings_count", Integer, nullable=False, server_default="0"),
+    Column("summary", Text, nullable=True),
+    Column("metrics", JSON, nullable=True),
+    Column("failures", JSON, nullable=True),
+    Index("ix_proactive_scans_started_at", "started_at"),
+    Index("ix_proactive_scans_status", "status"),
+)
+
+proactive_findings = Table(
+    "proactive_findings",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("scan_id", String(256), nullable=True),
+    Column("fingerprint", String(128), nullable=False),
+    Column("domain", String(64), nullable=False),
+    Column("detector_id", String(64), nullable=False),
+    Column("status", String(32), nullable=False, server_default="NEW"),
+    Column("severity", String(32), nullable=False, server_default="medium"),
+    Column("entity_type", String(64), nullable=True),
+    Column("entity_id", String(256), nullable=True),
+    Column("title", String(256), nullable=False),
+    Column("summary", Text, nullable=False),
+    Column("evidence", JSON, nullable=True),
+    Column("provenance", String(32), nullable=False, server_default="INFERRED"),
+    Column("uncertainty", JSON, nullable=True),
+    Column("data_gaps", JSON, nullable=True),
+    Column("suggested_action", JSON, nullable=True),
+    Column("first_detected_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("last_detected_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("resolved_at", DateTime(timezone=True), nullable=True),
+    Column("notification_sent_at", DateTime(timezone=True), nullable=True),
+    Column("severity_history", JSON, nullable=True),
+    Index("ix_proactive_findings_fingerprint", "fingerprint"),
+    Index("ix_proactive_findings_status", "status"),
+    Index("ix_proactive_findings_domain", "domain"),
+    Index("ix_proactive_findings_severity", "severity"),
+    Index("ix_proactive_findings_last_detected", "last_detected_at"),
+)
+
+USER_ROLE_VALUES = ("NETWORK_OPERATOR", "ORG_ADMIN", "ORG_OPERATOR", "ORG_VIEWER")
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("username", String(128), unique=True, nullable=False),
+    Column("email", String(256), unique=True, nullable=False),
+    Column("password_hash", String(512), nullable=False),
+    Column("full_name", String(256), nullable=False, server_default=""),
+    Column("is_active", Boolean, nullable=False, server_default="true"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("metadata", JSON, nullable=False, server_default="{}"),
+    Index("ix_users_username", "username"),
+    Index("ix_users_email", "email"),
+)
+
+organization_memberships = Table(
+    "organization_memberships",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("user_id", String(256), ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("organization_id", String(256), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False),
+    Column("role", String(64), nullable=False, server_default="ORG_VIEWER"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Index("ix_org_memberships_user_id", "user_id"),
+    Index("ix_org_memberships_org_id", "organization_id"),
+    Index("ix_org_memberships_user_org", "user_id", "organization_id", unique=True),
+    CheckConstraint(f"role IN ({', '.join(repr(v) for v in USER_ROLE_VALUES)})",
+                    name="ck_org_memberships_role"),
+)
+
+audit_logs = Table(
+    "audit_logs",
+    metadata,
+    Column("id", String(256), primary_key=True),
+    Column("timestamp", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("actor_id", String(256), nullable=False),
+    Column("organization_id", String(256), nullable=True),
+    Column("action", String(128), nullable=False),
+    Column("entity_type", String(128), nullable=False),
+    Column("entity_id", String(256), nullable=False),
+    Column("from_state", String(128), nullable=True),
+    Column("to_state", String(128), nullable=True),
+    Column("details", JSON, nullable=False, server_default="{}"),
+    Column("ip_address", String(128), nullable=True),
+    Index("ix_audit_logs_timestamp", "timestamp"),
+    Index("ix_audit_logs_actor_id", "actor_id"),
+    Index("ix_audit_logs_org_id", "organization_id"),
+    Index("ix_audit_logs_action", "action"),
+    Index("ix_audit_logs_entity", "entity_type", "entity_id"),
+)
+
+
 
 # ---------------------------------------------------------------------------
 # Engine / helpers
 # ---------------------------------------------------------------------------
+
+def run_migrations(engine) -> list[str]:
+    """Run additive, deterministic schema migrations (idempotent).
+
+    Production hardening: new columns are added with IF NOT EXISTS so an
+    existing populated database is upgraded in place without data loss and
+    a re-run is a no-op. Rollback strategy: the added columns are nullable
+    and unused by older code — restoring the previous application version
+    against a migrated database is safe.
+    """
+    applied: list[str] = []
+    statements = [
+        (
+            "agent_events.claimed_at",
+            "ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ",
+        ),
+        (
+            "agent_events.ix_agent_events_claimed_at",
+            "CREATE INDEX IF NOT EXISTS ix_agent_events_claimed_at ON agent_events (claimed_at)",
+        ),
+    ]
+    with engine.begin() as conn:
+        for name, stmt in statements:
+            conn.execute(text(stmt))
+            applied.append(name)
+    return applied
+
 
 def get_engine(database_url: str = None):
     """Create a SQLAlchemy engine from DATABASE_URL env var or explicit arg."""

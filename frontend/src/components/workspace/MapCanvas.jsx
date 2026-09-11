@@ -3,6 +3,7 @@ import {
   MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap,
 } from "react-leaflet";
 import L from "leaflet";
+import { Crosshair } from "lucide-react";
 import { useWorkspace } from "../../lib/workspaceContext";
 import { cn } from "../../lib/utils";
 import { MAP_STYLES } from "../../lib/mapStyles";
@@ -10,6 +11,21 @@ import { MAP_STYLES } from "../../lib/mapStyles";
 // -------------------------------------------------------------------
 // Marker icon factories
 // -------------------------------------------------------------------
+
+function createPinpointIcon() {
+  return L.divIcon({
+    className: "",
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor: [0, -20],
+    html: `<div style="position:relative;width:36px;height:36px;display:flex;align-items:center;justify-content:center;">
+      <div style="position:absolute;width:36px;height:36px;border-radius:50%;background:rgba(239,68,68,0.35);border:1.5px solid #ef4444;animation:ping 1.5s cubic-bezier(0,0,0.2,1) infinite;"></div>
+      <div style="width:16px;height:16px;border-radius:50%;background:#ef4444;border:2.5px solid white;box-shadow:0 0 12px rgba(239,68,68,0.9);display:flex;align-items:center;justify-content:center;">
+        <div style="width:4px;height:4px;border-radius:50%;background:white;"></div>
+      </div>
+    </div>`,
+  });
+}
 
 function createCircleIcon(color, size = 24) {
   return L.divIcon({
@@ -74,6 +90,23 @@ function createFacilityIcon(hasOverride) {
   });
 }
 
+function createAiAlertIcon(severity = "medium") {
+  const colors = {
+    critical: "#dc2626",
+    high: "#f97316",
+    medium: "#eab308",
+    low: "#22c55e",
+  };
+  const color = colors[severity] || colors.medium;
+  return L.divIcon({
+    className: "",
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -16],
+    html: `<div style="width:28px;height:28px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 10px ${color}aa, 0 2px 6px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:white;font-size:13px;font-weight:bold;">!</div>`,
+  });
+}
+
 // -------------------------------------------------------------------
 // Fly-to handler
 // -------------------------------------------------------------------
@@ -121,6 +154,25 @@ function RightClickHandler({ onReportAt }) {
 }
 
 // -------------------------------------------------------------------
+// Pinpoint map click handler
+// -------------------------------------------------------------------
+
+function MapClickHandler({ onMapClick, isPinpointing }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!map) return;
+    const handler = (e) => {
+      if (isPinpointing && e.latlng) {
+        onMapClick(e.latlng.lat, e.latlng.lng);
+      }
+    };
+    map.on("click", handler);
+    return () => map.off("click", handler);
+  }, [map, isPinpointing, onMapClick]);
+  return null;
+}
+
+// -------------------------------------------------------------------
 // Flood detail popup
 // -------------------------------------------------------------------
 
@@ -145,31 +197,63 @@ function FloodPopup({ snapshot }) {
 // Need marker
 // -------------------------------------------------------------------
 
-function NeedMarker({ need, onClick }) {
-  const urgencyColor = {
-    critical: "#dc2626",
-    high: "#d97706",
+function createNeedMarkerIcon(urgency) {
+  const u = String(urgency || "medium").toLowerCase();
+  const urgencyColors = {
+    critical: "#ef4444",
+    high: "#f97316",
     medium: "#eab308",
-    low: "#16a34a",
+    low: "#22c55e",
   };
-  const color = urgencyColor[need.urgency] || "#78716c";
-  const size = need.urgency === "critical" ? 28 : need.urgency === "high" ? 24 : 20;
+  const color = urgencyColors[u] || "#78716c";
+  const size = u === "critical" ? 28 : u === "high" ? 24 : 20;
+  const isCritical = u === "critical";
+
+  return L.divIcon({
+    className: "",
+    iconSize: [size + 16, size + 16],
+    iconAnchor: [(size + 16) / 2, (size + 16) / 2],
+    popupAnchor: [0, -(size + 16) / 2 - 2],
+    html: `<div style="position:relative;width:${size + 16}px;height:${size + 16}px;display:flex;align-items:center;justify-content:center;">
+      ${isCritical ? `<div style="position:absolute;width:${size + 16}px;height:${size + 16}px;border-radius:50%;background:rgba(239,68,68,0.35);border:1.5px solid #ef4444;animation:ping 1.5s cubic-bezier(0,0,0.2,1) infinite;"></div>` : ""}
+      <div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 10px ${color}99, 0 2px 6px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:white;font-size:${size > 22 ? 11 : 9}px;font-weight:bold;">
+        ${isCritical ? "!" : ""}
+      </div>
+    </div>`,
+  });
+}
+
+function NeedMarker({ need, position, onClick }) {
+  const pos = position || need._pos || (need.lat && need.lon ? [need.lat, need.lon] : null);
+  if (!pos || !pos[0] || !pos[1]) return null;
+
+  const urgencyColors = {
+    critical: "#ef4444",
+    high: "#f97316",
+    medium: "#eab308",
+    low: "#22c55e",
+  };
+  const u = String(need.urgency || "medium").toLowerCase();
+  const color = urgencyColors[u] || "#78716c";
 
   return (
     <Marker
-      position={[need.lat, need.lon]}
-      icon={createCircleIcon(color, size)}
+      position={pos}
+      icon={createNeedMarkerIcon(need.urgency)}
       eventHandlers={{ click: () => onClick("need", need.id, need) }}
     >
       <Popup>
         <div className="p-2 min-w-[180px]">
           <div className="text-[13px] font-semibold text-stone-800 mb-1">{need.title}</div>
           <div className="text-[11px] text-stone-500">
-            <span className="font-medium" style={{ color }}>{need.urgency}</span> · {need.need_type}
+            <span className="font-medium uppercase" style={{ color }}>{need.urgency}</span> · {need.need_type}
           </div>
           <div className="text-[10px] text-stone-400 mt-1">Status: {need.status}</div>
           {need.location_name && (
             <div className="text-[10px] text-stone-400">📍 {need.location_name}</div>
+          )}
+          {need.district_id && (
+            <div className="text-[10px] text-stone-400 capitalize">District: {need.district_id}</div>
           )}
         </div>
       </Popup>
@@ -181,7 +265,10 @@ function NeedMarker({ need, onClick }) {
 // Operation marker
 // -------------------------------------------------------------------
 
-function OperationMarker({ operation, onClick }) {
+function OperationMarker({ operation, position, onClick }) {
+  const pos = position || operation._pos || (operation.lat && operation.lon ? [operation.lat, operation.lon] : null);
+  if (!pos || !pos[0] || !pos[1]) return null;
+
   const statusColor = {
     PLANNING: "#2563eb",
     ACTIVE: "#16a34a",
@@ -193,7 +280,7 @@ function OperationMarker({ operation, onClick }) {
 
   return (
     <Marker
-      position={[operation.lat, operation.lon]}
+      position={pos}
       icon={createDiamondIcon(color, 24)}
       eventHandlers={{ click: () => onClick("operation", operation.id, operation) }}
     >
@@ -203,6 +290,9 @@ function OperationMarker({ operation, onClick }) {
           <div className="text-[11px] text-stone-500">{operation.operation_type} · {operation.status}</div>
           {operation.location_name && (
             <div className="text-[10px] text-stone-400 mt-1">📍 {operation.location_name}</div>
+          )}
+          {operation.district_id && (
+            <div className="text-[10px] text-stone-400 capitalize">District: {operation.district_id}</div>
           )}
         </div>
       </Popup>
@@ -214,10 +304,13 @@ function OperationMarker({ operation, onClick }) {
 // Offer marker
 // -------------------------------------------------------------------
 
-function OfferMarker({ offer, onClick }) {
+function OfferMarker({ offer, position, onClick }) {
+  const pos = position || offer._pos || (offer.lat && offer.lon ? [offer.lat, offer.lon] : null);
+  if (!pos || !pos[0] || !pos[1]) return null;
+
   return (
     <Marker
-      position={[offer.lat, offer.lon]}
+      position={pos}
       icon={createTriangleIcon("#0d9488", 20)}
       eventHandlers={{ click: () => onClick("offer", offer.id, offer) }}
     >
@@ -229,6 +322,9 @@ function OfferMarker({ offer, onClick }) {
           </div>
           {offer.location_name && (
             <div className="text-[10px] text-stone-400 mt-1">📍 {offer.location_name}</div>
+          )}
+          {offer.district_id && (
+            <div className="text-[10px] text-stone-400 capitalize">District: {offer.district_id}</div>
           )}
         </div>
       </Popup>
@@ -312,6 +408,70 @@ function SettlementMarker({ settlement, onClick }) {
         <div className="p-2 min-w-[150px]">
           <div className="text-[12px] font-semibold text-stone-800">{settlement.name}</div>
           <div className="text-[10px] text-stone-400">{settlement.district_id}</div>
+        </div>
+      </Popup>
+    </Marker>
+  );
+}
+
+// -------------------------------------------------------------------
+// AI Alert finding marker
+// -------------------------------------------------------------------
+
+function AIAlertMarker({ finding, onClick }) {
+  const colors = {
+    critical: "#dc2626",
+    high: "#f97316",
+    medium: "#eab308",
+    low: "#22c55e",
+  };
+  const color = colors[finding.severity] || colors.medium;
+
+  let lat = finding.lat || finding.review_target?.map_center?.[0];
+  let lon = finding.lon || finding.review_target?.map_center?.[1];
+
+  if (!lat || !lon) {
+    const districtCoords = {
+      sivasagar: [26.98, 94.63],
+      jorhat: [26.75, 94.22],
+      golaghat: [26.52, 93.97],
+      charaideo: [27.02, 94.85],
+    };
+    const center = districtCoords[finding.district_id] || [26.98, 94.63];
+    lat = center[0];
+    lon = center[1];
+  }
+
+  return (
+    <Marker
+      position={[lat, lon]}
+      icon={createAiAlertIcon(finding.severity)}
+      eventHandlers={{
+        click: () => {
+          if (onClick) {
+            onClick("aiAnalysis", finding.id, finding);
+          }
+        },
+      }}
+    >
+      <Popup>
+        <div className="p-2 min-w-[200px]">
+          <div className="flex items-center gap-1.5 mb-1">
+            <span
+              className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+              style={{ color, backgroundColor: `${color}15`, border: `1px solid ${color}40` }}
+            >
+              {finding.severity}
+            </span>
+            <span className="text-[10px] text-stone-500 capitalize">{finding.type}</span>
+          </div>
+          <div className="text-[13px] font-semibold text-stone-800 mb-1">{finding.title}</div>
+          <div className="text-[11px] text-stone-600 leading-snug">{finding.description}</div>
+          {finding.recommended_action && (
+            <div className="text-[10px] text-stone-500 mt-1.5 pt-1 border-t border-stone-200">
+              <span className="font-semibold">Action:</span> {finding.recommended_action}
+            </div>
+          )}
         </div>
       </Popup>
     </Marker>
@@ -409,9 +569,31 @@ export default function MapCanvas() {
     state,
     openPanel,
     setFilter,
+    toggleLayer,
+    setMapCenter,
     fetchFieldReports,
     fetchBuildings,
+    setPinpointCoords,
+    cancelPinpoint,
   } = useWorkspace();
+
+  // Pinpoint click handler
+  const handlePinpointClick = useCallback((lat, lng) => {
+    const latFormatted = parseFloat(lat.toFixed(6));
+    const lonFormatted = parseFloat(lng.toFixed(6));
+    setPinpointCoords({ lat: latFormatted, lon: lonFormatted });
+  }, [setPinpointCoords]);
+
+  // Handle ESC key to cancel pinpoint
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape" && state.pinpointMode?.active) {
+        cancelPinpoint();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [state.pinpointMode?.active, cancelPinpoint]);
 
   // Viewport-aware building loading
   const handleMapMoveEnd = useCallback((map) => {
@@ -469,55 +651,133 @@ export default function MapCanvas() {
     );
   }, [state.settlements, state.filters.district]);
 
-  // Filter needs by district
+  // District centroids for geographic coordinate resolution
+  const DISTRICT_CENTERS = {
+    sivasagar: [26.98, 94.63],
+    jorhat: [26.75, 94.22],
+    golaghat: [26.52, 93.97],
+    charaideo: [27.02, 94.85],
+  };
+
+  const getEntityCoordinates = useCallback((entity, idx = 0) => {
+    if (entity.lat && entity.lon && !isNaN(entity.lat) && !isNaN(entity.lon)) {
+      return [entity.lat, entity.lon];
+    }
+    if (entity.location_name) {
+      const locLower = String(entity.location_name).toLowerCase();
+      const sMatch = state.settlements.find(
+        (s) => s.name?.toLowerCase() === locLower || s.id?.toLowerCase() === locLower
+      );
+      if (sMatch && sMatch.lat && sMatch.lon) {
+        return [sMatch.lat, sMatch.lon];
+      }
+    }
+    const districtKey = String(entity.district_id || "jorhat").toLowerCase();
+    const base = DISTRICT_CENTERS[districtKey] || [26.85, 94.35];
+    const idStr = String(entity.id || idx);
+    let hash = 0;
+    for (let i = 0; i < idStr.length; i++) {
+      hash = (hash << 5) - hash + idStr.charCodeAt(i);
+      hash |= 0;
+    }
+    const angle = ((Math.abs(hash) % 360) * Math.PI) / 180;
+    const distance = 0.012 + ((Math.abs(hash >> 3) % 4) * 0.008);
+    return [base[0] + Math.sin(angle) * distance, base[1] + Math.cos(angle) * distance];
+  }, [state.settlements]);
+
+  // Compute counts for active filters and HUD chips
+  const urgencyCounts = useMemo(() => {
+    const counts = { critical: 0, high: 0, medium: 0, low: 0, total: 0 };
+    state.needs.forEach((n) => {
+      if (state.filters.district && n.district_id !== state.filters.district) return;
+      const u = String(n.urgency || "").toLowerCase();
+      if (counts[u] !== undefined) counts[u]++;
+      counts.total++;
+    });
+    return counts;
+  }, [state.needs, state.filters.district]);
+
+  const statusCounts = useMemo(() => {
+    const counts = { OPEN: 0, RESPONDING: 0, RESOLVED: 0, total: 0 };
+    state.needs.forEach((n) => {
+      if (state.filters.district && n.district_id !== state.filters.district) return;
+      const s = String(n.status || "").toUpperCase();
+      if (counts[s] !== undefined) counts[s]++;
+      counts.total++;
+    });
+    return counts;
+  }, [state.needs, state.filters.district]);
+
+  // Filter needs by district, urgency, and status
   const visibleNeeds = useMemo(() => {
     let filtered = state.needs;
     if (state.filters.district) {
       filtered = filtered.filter((n) => n.district_id === state.filters.district);
     }
     if (state.filters.urgency) {
-      filtered = filtered.filter((n) => n.urgency === state.filters.urgency);
+      filtered = filtered.filter(
+        (n) => String(n.urgency).toLowerCase() === String(state.filters.urgency).toLowerCase()
+      );
     }
     if (state.filters.status) {
-      filtered = filtered.filter((n) => n.status === state.filters.status);
+      filtered = filtered.filter(
+        (n) => String(n.status).toUpperCase() === String(state.filters.status).toUpperCase()
+      );
     }
-    return filtered;
-  }, [state.needs, state.filters]);
+    return filtered.map((n, idx) => ({
+      ...n,
+      _pos: getEntityCoordinates(n, idx),
+    }));
+  }, [state.needs, state.filters, getEntityCoordinates]);
 
-  // Filter operations by district
+  // Filter operations by district and status
   const visibleOperations = useMemo(() => {
     let filtered = state.operations;
     if (state.filters.district) {
       filtered = filtered.filter((o) => o.district_id === state.filters.district);
     }
-    // Status filter for operations maps OPEN→PLANNING, RESPONDING→ACTIVE, RESOLVED→COMPLETED
     if (state.filters.status) {
-      const statusMap = { OPEN: 'PLANNING', RESPONDING: 'ACTIVE', RESOLVED: 'COMPLETED' };
+      const statusMap = { OPEN: "PLANNING", RESPONDING: "ACTIVE", RESOLVED: "COMPLETED" };
       const targetStatus = statusMap[state.filters.status] || state.filters.status;
-      filtered = filtered.filter((o) => o.status === targetStatus);
+      filtered = filtered.filter(
+        (o) => String(o.status).toUpperCase() === String(targetStatus).toUpperCase()
+      );
     }
-    return filtered;
-  }, [state.operations, state.filters]);
+    return filtered.map((o, idx) => ({
+      ...o,
+      _pos: getEntityCoordinates(o, idx),
+    }));
+  }, [state.operations, state.filters, getEntityCoordinates]);
 
-  // Filter offers by district
+  // Filter offers by district and status
   const visibleOffers = useMemo(() => {
     let filtered = state.offers;
     if (state.filters.district) {
       filtered = filtered.filter((o) => o.district_id === state.filters.district);
     }
-    return filtered.filter((o) => o.lat && o.lon);
-  }, [state.offers, state.filters]);
+    if (state.filters.status) {
+      const statusMap = {
+        OPEN: ["OFFERED", "AVAILABLE"],
+        RESPONDING: ["ACCEPTED", "ALLOCATED", "COMMITTED"],
+        RESOLVED: ["DEPLETED", "CLOSED", "FULFILLED"],
+      };
+      const allowed = statusMap[state.filters.status] || [state.filters.status];
+      filtered = filtered.filter((o) => allowed.includes(String(o.status).toUpperCase()));
+    }
+    return filtered.map((o, idx) => ({
+      ...o,
+      _pos: getEntityCoordinates(o, idx),
+    }));
+  }, [state.offers, state.filters, getEntityCoordinates]);
 
-  // Filter field reports by district (approximate geographic filter using settlements as reference)
+  // Filter field reports by district, urgency, and status
   const visibleReports = useMemo(() => {
     let reports = state.fieldReports.filter((r) => r.lat && r.lon);
     if (state.filters.district) {
-      // Filter reports that have coordinates near the selected district's settlements
       const districtSettlements = state.settlements.filter(
         (s) => s.district_id === state.filters.district
       );
       if (districtSettlements.length > 0) {
-        // Compute district bounding box from settlements
         const lats = districtSettlements.map((s) => s.lat);
         const lons = districtSettlements.map((s) => s.lon);
         const minLat = Math.min(...lats) - 0.15;
@@ -529,13 +789,21 @@ export default function MapCanvas() {
         );
       }
     }
+    if (state.filters.urgency) {
+      reports = reports.filter(
+        (r) => !r.urgency || String(r.urgency).toLowerCase() === String(state.filters.urgency).toLowerCase()
+      );
+    }
+    if (state.filters.status) {
+      reports = reports.filter(
+        (r) => !r.status || String(r.status).toUpperCase() === String(state.filters.status).toUpperCase()
+      );
+    }
     return reports;
-  }, [state.fieldReports, state.settlements, state.filters.district]);
-
-
+  }, [state.fieldReports, state.settlements, state.filters]);
 
   return (
-    <div className="flex-1 relative">
+    <div className={cn("flex-1 relative", state.pinpointMode?.active && "cursor-crosshair")}>
       <MapContainer
         center={center}
         zoom={zoom}
@@ -550,7 +818,30 @@ export default function MapCanvas() {
 
         <FlyTo center={center} zoom={zoom} />
         <RightClickHandler onReportAt={handleReportAt} />
+        <MapClickHandler onMapClick={handlePinpointClick} isPinpointing={Boolean(state.pinpointMode?.active)} />
         <MapMoveHandler onMoveEnd={handleMapMoveEnd} />
+
+        {/* Pinpoint Preview Marker */}
+        {state.pinpointMode?.coords && (
+          <Marker
+            position={[state.pinpointMode.coords.lat, state.pinpointMode.coords.lon]}
+            icon={createPinpointIcon()}
+          >
+            <Popup>
+              <div className="p-2 min-w-[150px]">
+                <div className="text-[12px] font-semibold text-red-600 flex items-center gap-1">
+                  📍 Pinpointed Coordinates
+                </div>
+                <div className="text-[11px] font-mono text-stone-700 mt-1">
+                  Lat: {state.pinpointMode.coords.lat}
+                </div>
+                <div className="text-[11px] font-mono text-stone-700">
+                  Lon: {state.pinpointMode.coords.lon}
+                </div>
+              </div>
+            </Popup>
+          </Marker>
+        )}
 
         {/* Flood layer (current / default) */}
         {state.layers.flood && !state.layers.floodHistory && state.floodData && state.floodData.features && state.floodData.features.length > 0 && (
@@ -618,24 +909,20 @@ export default function MapCanvas() {
 
         {/* Needs layer */}
         {state.layers.needs &&
-          visibleNeeds
-            .filter((n) => n.lat && n.lon)
-            .map((need) => (
-              <NeedMarker key={need.id} need={need} onClick={handleObjectClick} />
-            ))}
+          visibleNeeds.map((need) => (
+            <NeedMarker key={need.id} need={need} position={need._pos} onClick={handleObjectClick} />
+          ))}
 
         {/* Operations layer */}
         {state.layers.operations &&
-          visibleOperations
-            .filter((o) => o.lat && o.lon)
-            .map((op) => (
-              <OperationMarker key={op.id} operation={op} onClick={handleObjectClick} />
-            ))}
+          visibleOperations.map((op) => (
+            <OperationMarker key={op.id} operation={op} position={op._pos} onClick={handleObjectClick} />
+          ))}
 
         {/* Offers layer */}
         {state.layers.offers &&
           visibleOffers.map((offer) => (
-            <OfferMarker key={offer.id} offer={offer} onClick={handleObjectClick} />
+            <OfferMarker key={offer.id} offer={offer} position={offer._pos} onClick={handleObjectClick} />
           ))}
 
         {/* Medical facilities layer */}
@@ -649,24 +936,42 @@ export default function MapCanvas() {
         ))}
 
         {/* Organizations layer */}
-        {state.layers.organizations && state.organizations.map((org) => (
-          <Marker
-            key={org.id}
-            position={[26.98, 94.66]} // organizations may not have coordinates — show at district center
-            icon={createCircleIcon("#2563eb", 16)}
-            eventHandlers={{ click: () => handleObjectClick("organization", org.id, org) }}
-          >
-            <Popup>
-              <div className="p-2 min-w-[180px]">
-                <div className="text-[13px] font-semibold text-stone-800 mb-1">{org.name}</div>
-                <div className="text-[11px] text-stone-500">{org.organization_type}</div>
-                {org.description && (
-                  <div className="text-[10px] text-stone-400 mt-1">{org.description}</div>
-                )}
-              </div>
-            </Popup>
-          </Marker>
-        ))}
+        {state.layers.organizations &&
+          state.organizations.map((org, idx) => {
+            const districtCenters = [
+              [26.98, 94.63], // Sivasagar
+              [26.75, 94.22], // Jorhat
+              [26.52, 93.97], // Golaghat
+              [27.02, 94.85], // Charaideo
+            ];
+            const base = districtCenters[idx % districtCenters.length];
+            const offset = (Math.floor(idx / districtCenters.length)) * 0.03;
+            const pos = [base[0] + offset, base[1] + offset];
+
+            return (
+              <Marker
+                key={org.id}
+                position={pos}
+                icon={createCircleIcon("#2563eb", 20)}
+                eventHandlers={{ click: () => handleObjectClick("organization", org.id, org) }}
+              >
+                <Popup>
+                  <div className="p-2 min-w-[180px]">
+                    <div className="text-[13px] font-semibold text-stone-800 mb-0.5">{org.name}</div>
+                    <div className="text-[11px] text-blue-600 font-medium capitalize">{org.organization_type || "NGO"}</div>
+                    {org.description && (
+                      <div className="text-[10px] text-stone-500 mt-1 line-clamp-2">{org.description}</div>
+                    )}
+                    {org.published_capabilities && org.published_capabilities.length > 0 && (
+                      <div className="text-[9px] text-stone-400 mt-1">
+                        Capabilities: {org.published_capabilities.join(", ")}
+                      </div>
+                    )}
+                  </div>
+                </Popup>
+              </Marker>
+            );
+          })}
 
         {/* Field reports layer */}
         {state.layers.fieldReports &&
@@ -677,38 +982,129 @@ export default function MapCanvas() {
               onClick={handleObjectClick}
             />
           ))}
+
+        {/* AI Alerts layer */}
+        {state.layers.aiAlerts &&
+          (state.aiAnalysis?.findings || []).map((finding, idx) => (
+            <AIAlertMarker
+              key={finding.id || idx}
+              finding={finding}
+              onClick={handleObjectClick}
+            />
+          ))}
       </MapContainer>
 
-      {/* Map overlay: filter bar */}
-      <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-1.5 px-2 py-1 bg-[#0f1419]/90 backdrop-blur-sm rounded border border-[#2a3a4e]">
-        <FilterChip
-          label="All Urgency"
-          active={!state.filters.urgency}
-          onClick={() => setFilter("urgency", null)}
-        />
-        {["critical", "high", "medium", "low"].map((u) => (
+      {/* Map overlay: Osiris / World Monitor Operational Lens Filter Bar */}
+      <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1000] flex flex-col items-center gap-1.5 max-w-[95vw]">
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0b0f17]/95 backdrop-blur-md rounded-lg border border-[#2a3a4e] shadow-xl">
+          <div className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider mr-1 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            LENS:
+          </div>
+
+          {/* Urgency Filters */}
           <FilterChip
-            key={u}
-            label={u}
-            active={state.filters.urgency === u}
-            onClick={() => setFilter("urgency", u)}
-            color={
-              u === "critical"
-                ? "#dc2626"
-                : u === "high"
-                ? "#d97706"
-                : u === "medium"
-                ? "#eab308"
-                : "#16a34a"
-            }
+            label={`All Urgency (${urgencyCounts.total})`}
+            active={!state.filters.urgency}
+            onClick={() => setFilter("urgency", null)}
           />
-        ))}
+          {[
+            { id: "critical", label: `Critical (${urgencyCounts.critical})`, color: "#ef4444" },
+            { id: "high", label: `High (${urgencyCounts.high})`, color: "#f97316" },
+            { id: "medium", label: `Medium (${urgencyCounts.medium})`, color: "#eab308" },
+            { id: "low", label: `Low (${urgencyCounts.low})`, color: "#22c55e" },
+          ].map(({ id, label, color }) => (
+            <FilterChip
+              key={id}
+              label={label}
+              active={String(state.filters.urgency).toLowerCase() === id}
+              onClick={() => {
+                const next = String(state.filters.urgency).toLowerCase() === id ? null : id;
+                setFilter("urgency", next);
+                if (next && !state.layers.needs) toggleLayer("needs");
+              }}
+              color={color}
+            />
+          ))}
+
+          <div className="w-[1px] h-4 bg-[#2a3a4e] mx-1" />
+
+          {/* Status Filters */}
+          <FilterChip
+            label="All Status"
+            active={!state.filters.status}
+            onClick={() => setFilter("status", null)}
+          />
+          {[
+            { id: "OPEN", label: `Open (${statusCounts.OPEN})`, color: "#ef4444" },
+            { id: "RESPONDING", label: `Responding (${statusCounts.RESPONDING})`, color: "#3b82f6" },
+            { id: "RESOLVED", label: `Resolved (${statusCounts.RESOLVED})`, color: "#22c55e" },
+          ].map(({ id, label, color }) => (
+            <FilterChip
+              key={id}
+              label={label}
+              active={state.filters.status === id}
+              onClick={() => {
+                const next = state.filters.status === id ? null : id;
+                setFilter("status", next);
+                if (next && !state.layers.needs) toggleLayer("needs");
+                if (next && !state.layers.operations) toggleLayer("operations");
+              }}
+              color={color}
+            />
+          ))}
+        </div>
+
+        {/* Active Operational Filter Indicator */}
+        {(state.filters.urgency || state.filters.status) && (
+          <div className="flex items-center gap-2 px-2.5 py-1 bg-[#1e293b]/95 backdrop-blur-sm rounded-full border border-sky-500/40 text-[10px] text-sky-300 shadow-lg animate-in fade-in slide-in-from-top-1 duration-200">
+            <span className="font-semibold uppercase tracking-wide flex items-center gap-1">
+              ⚡ ACTIVE VIEW: {state.filters.urgency ? `${state.filters.urgency} urgency` : ""} {state.filters.urgency && state.filters.status ? "·" : ""} {state.filters.status ? `${state.filters.status} status` : ""}
+            </span>
+            <span className="text-stone-400">({visibleNeeds.length} needs, {visibleOperations.length} ops visible)</span>
+            <button
+              onClick={() => {
+                setFilter("urgency", null);
+                setFilter("status", null);
+              }}
+              className="ml-1 px-1.5 py-0.5 rounded bg-sky-950/80 hover:bg-sky-900 text-sky-200 hover:text-white border border-sky-500/30 text-[9px] font-bold transition-colors"
+            >
+              Reset Lens ✕
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Pinpoint Mode HUD Banner (Osiris / World Monitor style) */}
+      {state.pinpointMode?.active && (
+        <div className="absolute top-12 left-1/2 -translate-x-1/2 z-[1001] flex items-center gap-3 px-3.5 py-2 bg-[#090d16]/95 backdrop-blur-md rounded-lg border border-red-500/60 shadow-2xl shadow-red-950/60 animate-bounce">
+          <div className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
+            <Crosshair className="w-4 h-4 text-red-400 animate-spin" style={{ animationDuration: '6s' }} />
+            <span className="text-[12px] font-semibold text-red-400 tracking-wider uppercase">
+              PINPOINT MODE ACTIVE
+            </span>
+          </div>
+          <span className="text-[11px] text-stone-300">
+            Click anywhere on the map to set exact coordinates for <span className="font-semibold text-white capitalize">{state.pinpointMode.formType || "location"}</span>
+          </span>
+          <button
+            onClick={cancelPinpoint}
+            className="px-2 py-0.5 rounded text-[10px] font-medium bg-[#1e293b] text-stone-300 hover:text-white border border-stone-700 hover:border-stone-500 transition-colors"
+          >
+            Cancel (ESC)
+          </button>
+        </div>
+      )}
 
       {/* Map overlay: data status */}
       <div className="absolute bottom-2 left-2 z-[1000] flex items-center gap-2 px-2 py-1 bg-[#0f1419]/90 backdrop-blur-sm rounded border border-[#2a3a4e]">
         <div className="text-[10px] text-[#6b7d93]">
           {visibleSettlements.length} settlements · {visibleNeeds.length} needs · {visibleOperations.length} ops · {visibleOffers.length} offers
+          {state.layers.fieldReports && <span> · {visibleReports.length} reports</span>}
+          {state.layers.organizations && <span> · {state.organizations.length} orgs</span>}
+          {state.layers.aiAlerts && state.aiAnalysis?.findings && <span> · {state.aiAnalysis.findings.length} AI alerts</span>}
+          {state.filters.status && <span className="text-amber-400"> · Status: {state.filters.status}</span>}
           {state.buildingsMeta && state.buildingsMeta.truncated && (
             <span className="text-[#4a5568]"> · {state.buildingsMeta.total_available} buildings (showing {state.buildingsMeta.returned})</span>
           )}

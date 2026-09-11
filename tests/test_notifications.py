@@ -75,12 +75,12 @@ def test_need(client):
 
 
 class TestNotificationRepository:
-    def test_create_and_retrieve_notification(self):
+    def test_create_and_retrieve_notification(self, test_org_a):
         repo = get_repository()
         notif_id = f"notif_{uuid.uuid4().hex[:8]}"
         notif = Notification(
             id=notif_id,
-            recipient_id="org_notif_a",
+            recipient_id=test_org_a.id,
             notification_type="test_notification",
             title="Test Title",
             message="Test notification message",
@@ -92,24 +92,24 @@ class TestNotificationRepository:
         created = repo.create_notification(notif)
         assert created.id == notif_id
 
-        notifs = repo.list_notifications(recipient_id="org_notif_a")
+        notifs = repo.list_notifications(recipient_id=test_org_a.id)
         matching = [n for n in notifs if n.id == notif_id]
         assert len(matching) == 1
         assert matching[0].title == "Test Title"
         assert matching[0].read is False
 
-    def test_unread_only_filtering_and_mark_read(self):
+    def test_unread_only_filtering_and_mark_read(self, test_org_b):
         repo = get_repository()
         n1 = Notification(
             id=f"notif_{uuid.uuid4().hex[:8]}",
-            recipient_id="org_notif_filter",
+            recipient_id=test_org_b.id,
             notification_type="test",
             title="Unread 1",
             read=False,
         )
         n2 = Notification(
             id=f"notif_{uuid.uuid4().hex[:8]}",
-            recipient_id="org_notif_filter",
+            recipient_id=test_org_b.id,
             notification_type="test",
             title="Unread 2",
             read=False,
@@ -120,8 +120,8 @@ class TestNotificationRepository:
         # Mark n1 as read
         repo.mark_notification_read(n1.id)
 
-        all_notifs = repo.list_notifications(recipient_id="org_notif_filter", unread_only=False)
-        unread_notifs = repo.list_notifications(recipient_id="org_notif_filter", unread_only=True)
+        all_notifs = repo.list_notifications(recipient_id=test_org_b.id, unread_only=False)
+        unread_notifs = repo.list_notifications(recipient_id=test_org_b.id, unread_only=True)
 
         assert any(n.id == n1.id for n in all_notifs)
         assert any(n.id == n2.id for n in all_notifs)
