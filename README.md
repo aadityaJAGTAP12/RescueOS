@@ -1,359 +1,269 @@
 # ReliefOS
 
-A multi-agent disaster-response framework that prioritizes rescue operations using real flood data, building exposure analysis, medical facility accessibility scoring, OSRM routing with flood-aware intersection detection, and community field intelligence.
+ReliefOS is a generalized disaster-response coordination and operational intelligence platform that turns fragmented spatial, field, organizational, and operational information into explainable coordination workflows with human-controlled actions.
 
-**Generalization is a hard requirement.** ReliefOS must work across different districts, flood events, dates, infrastructure, and resource constraints without district-specific branching. The 2026 Assam flood scenarios (Sivasagar, Jorhat, Charaideo) are retrospective validation cases — they must not become hardcoded application logic.
+ReliefOS is generalized at the orchestration layer and validated through an Assam flood case study.
 
-## Current Statuscf 
+## Problem
 
-| Milestone | Status |
-|---|---|
-| Phase 1 — Multi-agent architecture | ✅ Complete |
-| Phase 2 — Flood-aware routing + community reports + frontend | ✅ Complete |
-| Phase 3 — Generalized, scenario-independent data foundation | ✅ Complete |
-| Phase 4 — Rewire runtime to generalized data layer | ✅ Complete |
-| Phase 5A — PostgreSQL + PostGIS production data layer | ✅ Complete |
-| Test suite | 182 tests passing (24 DB integration tests require PostgreSQL) |
+During flood and disaster response, the information needed to act is scattered across incompatible places: satellite flood extents, road/bridge conditions, field observations phrased in free text, and the private inventories of many separate organizations. No single operational picture exists, so coordination gaps (unmet needs), duplicated effort, and unsafe routing decisions are discovered late — or not at all.
+
+## Solution
+
+ReliefOS builds a shared operational picture on PostgreSQL + PostGIS and runs an event-driven multi-agent runtime over it:
+
+- **A Network Main Agent** reasons over shared state with eight specialist workers (situation, exposure, medical, logistics, access, field, coordination, evidence).
+- **Organization (NGO) Main Agents** reason over each organization's private state plus the shared picture, with private specialist workers (inventory, team, mission, logistics, field).
+- **Bounded Strands-based reasoning** turns messy natural language into structured, verified operational data and interprets deterministic findings.
+- **A human-approval boundary** ensures every consequential action — publishing an offer, confirming a match, creating an operation — is explicitly approved by a person.
+- **A proactive intelligence runtime** continuously scans for coordination gaps, access risks, medical/logistics gaps, exposure risk, and conflicting field reports, and reconciles finding lifecycles over time.
+
+## Who It Is For
+
+- **Emergency operations coordinators** who need one map-first picture of hazards, access, needs, and response activity.
+- **Relief organizations (NGOs)** that must decide what to offer without exposing private inventory, teams, or missions.
+- **Field personnel and communities** who report conditions in plain language and need those reports to become structured, verified operational data.
+
+## Why It Is Different
+
+- **Geographic issues:** like an issue tracker for the physical world — every need lives inside a hazard/access/medical context, not just a list.
+- **Privacy as architecture:** organizations keep private state; only explicitly approved contributions cross the boundary. This is enforced structurally (public-view projections), not by convention.
+- **Deterministic control loop with bounded AI:** deterministic agents compute, rank, and detect; LLM reasoning is bounded, evidence-cited, and guarded (fabricated numbers are detected and discarded). The deterministic path keeps working when the LLM is unavailable.
+- **Explainability:** every finding carries provenance (OBSERVED / DERIVED / USER_PROVIDED / ASSUMED / SYNTHETIC / UNKNOWN), evidence, uncertainty, and data gaps.
+- **Human-in-the-loop by design:** agents detect, calculate, rank, summarize, interpret, explain, recommend, and propose — they do not autonomously take consequential actions.
+
+## Core Workflow
+
+```text
+Need
+→ Assessment
+→ Coordination
+→ Proposal
+→ Organization Evaluation
+→ Human Approval
+→ Offer / Operation
+```
+
+Concretely: a need is created from field data or coordinator input → the Network Main Agent analyzes it → a coordination proposal is generated for a suitable organization → the organization's NGO Main Agent evaluates it against private state (inventory, teams, missions) → a human approves publication → a public resource offer and operation are created on the shared state. The lifecycle is `PROPOSED → PENDING_ORG_REVIEW → ORG_RECOMMENDED → PENDING_HUMAN_APPROVAL → PUBLISHED → CONFIRMED` (or `DECLINED`/`EXPIRED`).
 
 ## Architecture
 
-ReliefOS uses a modular multi-agent architecture built on the [Strands SDK](https://github.com/strands-agents/sdk-python):
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the architecture diagram and its explanation.
 
-```
-agent/
-├── config.py                          # Model provider, constants, known locations
-├── data_loader.py                     # Flood polygon loading, haversine, caching
-├── main.py                            # Entry point (ranking + allocation demo)
-├── api.py                             # Flask API (port 5001) — primary backend
-├── assessment.py                      # run_relief_assessment() — orchestrator
-├── community_reports.py               # Community report CRUD (JSON storage)
-├── overrides.py                       # Manual status override system
-├── verification.py                    # LLM extraction guardrails
-│
-├── tools/                             # Pure functions (testable, deterministic)
-│   ├── flood_tool.py                  # Flood detection against Sentinel-1 GeoJSON
-│   ├── exposure_tool.py               # Building exposure counting within flood zones
-│   ├── accessibility_tool.py          # Medical facility proximity via Overpass API
-│   ├── allocation_tool.py             # PDC scoring, ranking, greedy allocation
-│   ├── routing_tool.py                # OSRM routing + flood-route intersection detection
-│   ├── road_status_tool.py            # Road flood check (exists, not in deterministic runtime)
-│   ├── region_scan_tool.py            # Grid-based flood area scanning
-│   ├── field_intelligence_tool.py     # LLM extraction from raw field observations
-│   └── query_parser_tool.py           # LLM parsing of free-text coordinator queries
-│
-├── agents/                            # Strands Agent reasoning components
-│   ├── coordinator_agent.py           # Top-level orchestration of all sub-agents
-│   ├── flood_assessment_agent.py      # Flood + building exposure reasoning
-│   ├── accessibility_agent.py         # Medical accessibility reasoning
-│   ├── allocation_agent.py            # Priority computation reasoning
-│   └── supply_matching_agent.py       # Supply matching reasoning
-│
-├── tools/                             # Tool functions
-│   ├── ...
-│
-├── data/
-│   ├── sivasagar_flood.geojson        # Sentinel-1 flood polygons (static)
-│   ├── community_reports.json         # Stored community reports
-│   ├── overrides.json                 # Manual status overrides
-│   └── cache/                         # Overpass API cache files
-│       ├── accessibility_*.json
-│       ├── buildings_*.json
-│       └── roads_*.json
-│
-├── osrm/                              # Local OSRM routing server config
-│   ├── docker-compose.yml
-│   ├── setup.sh
-│   └── README.md
-│
-├── frontend/                          # React/Vite/Tailwind UI
-│   ├── src/
-│   │   ├── App.jsx                    # Main app with routing
-│   │   └── components/
-│   │       ├── QueryInput.jsx         # Free-text query interface
-│   │       ├── SituationMap.jsx       # Leaflet flood map visualization
-│   │       ├── OperationalAnswer.jsx  # Assessment result display
-│   │       ├── StagedReveal.jsx       # Progressive data reveal animation
-│   │       ├── EvidenceCard.jsx       # Evidence display cards
-│   │       ├── EvidencePanel.jsx      # Evidence aggregation panel
-│   │       ├── DataGapsPanel.jsx      # Missing data indicators
-│   │       ├── FieldIntelligencePage.jsx # Field report submission
-│   │       ├── Header.jsx             # App header
-│   │       └── LocationSelector.jsx   # Location picker
-│
-├── tests/                             # 114 tests
-│   ├── conftest.py
-│   ├── test_routing.py                # OSRM routing + flood intersection
-│   ├── test_priority.py               # PDC scoring
-│   ├── test_allocation.py             # Resource allocation
-│   ├── test_assessment.py             # Assessment orchestration
-│   ├── test_flood_tool.py             # Flood detection
-│   ├── test_community_reports.py      # Community report storage
-│   ├── test_verification.py           # LLM guardrails
-│   └── test_agent_trace.py            # Agent trace verification
-│
-├── kobo_webhook_receiver.py           # Separate Flask app (port 5000) for KoboToolbox
-├── test_kobo_webhook_locally.py       # Local Kobo webhook testing
-└── requirements.txt
+## AI Agent Architecture
+
+```text
+Network Main Agent                      Organization Main Agent (per org)
+  ├ Situation Worker                     ├ Inventory Worker
+  ├ Exposure Worker                      ├ Team Worker
+  ├ Medical Worker                       ├ Mission Worker
+  ├ Logistics Worker                     ├ Logistics Worker
+  ├ Access Worker                        └ Field Worker
+  ├ Field Worker                             │
+  ├ Coordination Worker                 PRIVATE ORG STATE
+  └ Evidence Worker                          │
+       │                                public contribution
+       ▼                                     │
+SHARED OPERATIONAL STATE                HUMAN APPROVAL
+(PostgreSQL + PostGIS)                       │
+                                        OFFER / OPERATION
 ```
 
-### Design Decisions
+- The **Network Main Agent** never reads organization-private state. Events are routed deterministically to relevant specialists; failures are isolated as explicit data gaps rather than fabricated findings.
+- **Organization Main Agents** combine `PrivateOrganizationContext` with `SharedNetworkContext`. Their recommendations include a proposed publication — which stays a proposal until a human approves it.
+- There is no uncontrolled peer-to-peer agent chatter: `Worker → Main Agent → shared operational object → other Main Agent`.
 
-- **Model Provider Isolation**: All model-specific code lives in `config.py`. Switch from Ollama to AWS Bedrock by changing only that file.
-- **Tool Composition over Agent.run()**: Strands Agent objects don't expose a `.run()` method. Agent tools call other `@tool` functions directly and compose results in Python — guaranteeing execution order with no step-skipping.
-- **Cache-First Pattern**: Overpass API responses are cached locally in `data/cache/` to avoid rate limits and enable offline testing.
-- **Honest Error Handling**: API timeouts and missing data are returned as explicit uncertainty states, not silent failures. Scoring treats unknown data conservatively.
-- **Deterministic + LLM paths**: The assessment pipeline has a fully deterministic path (flood detection, exposure, accessibility, PDC, allocation) that works without any LLM. LLM agents provide synthesis/reasoning on top.
-- **Flood-aware routing**: OSRM routing uses `overview=full` to get complete geometry, then checks flood-polygon intersection via Shapely. Haversine fallback for when OSRM is unavailable.
+## Strands Agents Integration
 
-### PDC Scoring Formula
+[Strands Agents](https://github.com/strands-agents/sdk-python) (`strands-agents==1.52.0`) provides the **bounded reasoning layer** inside ReliefOS:
 
-```
-PDC = 0.35 × building_exposure + 0.35 × flood_polygon_scale + 0.30 × medical_accessibility
-```
-
-PDC components are normalized 0–1. Locations are classified:
-- PDC ≥ 0.5 → **PRIORITY**
-- PDC ≥ 0.3 → **EXPOSED**
-- PDC < 0.3 → **SAFE**
-
-### Flood Detection Semantics
-
-`flood_tool.py` classifies point locations as:
-- **exactly contained** — point is inside a flood polygon
-- **near flood zone** — point is within flood threshold distance of a polygon
-- **flooded** — either of the above
-- **nearest flood polygon** — distance to closest polygon returned
-
-### Routing + Flood Intersection
-
-`routing_tool.py` implements:
-1. OSRM route request with `overview=full`, `geometries=geojson`, `steps=true`
-2. Route geometry extracted from OSRM response
-3. `check_route_flood_intersection()` — tests if route geometry intersects any flood polygon via Shapely
-4. Haversine fallback — 2-point straight-line geometry when OSRM is unavailable (source labeled as `"straight-line (haversine)"`)
-5. `get_multiple_routes()` — generates route variants for comparison
-6. `get_route_for_allocation()` — route-aware allocation helper
-
-## Running
-
-```bash
-# Main demo: rank 3 known locations + allocate resources
-python agent/main.py
-
-# Flask API (port 5001)
-python -m agent.api
-
-# Start the database, initialize persistent data, and run the API (Windows)
-start_backend.bat
-
-# React frontend (port 3000, separate terminal)
-cd frontend && npm run dev
-
-# All 182 tests (no Ollama required, no DB required)
-python -m pytest -v
-```
-
-### Phase 5A: PostgreSQL + PostGIS Setup
-
-ReliefOS now supports PostgreSQL + PostGIS as a production data layer.
-
-```bash
-# 1. Start PostgreSQL + PostGIS (Docker)
-docker compose up -d
-
-# 2. Set DATABASE_URL (the Windows launcher does this automatically)
-export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos
-
-# 3. Initialize database schema + import data
-python scripts/db_init.py
-
-# 4. Run API with PostgreSQL backend
-python -m agent.api
-
-# 5. Run DB integration tests (24 tests)
-pytest tests/test_postgres_repository.py -v
-
-# 6. Force in-memory mode (for tests)
-export RELIEFOS_MEMORY=1
-python -m pytest tests/ -v
-```
-
-**Without PostgreSQL:** The application falls back to InMemoryRepository automatically.
-All 182 existing tests pass without any database.
-
-**With PostgreSQL:** Set `DATABASE_URL` and the application uses PostgresRepository.
-24 additional DB integration tests become available.
-
-### URLs
-
-| Service | URL | Purpose |
+| Strands component | Location | Role |
 |---|---|---|
-| Frontend | http://localhost:3000 | Dashboard, query, map, field intelligence |
-| API | http://localhost:5001 | All backend endpoints |
-| Ollama | http://localhost:11434 | LLM inference (llama3.2) |
+| Query parsing agent | `agent/tools/query_parser_tool.py` | Extracts structured intent from free-text coordinator queries; never answers the query itself |
+| Field intelligence extraction agent | `agent/tools/field_intelligence_tool.py` | Extracts structured fields (needs, people counts, road/facility statuses) from raw field observations |
+| Coordinator agent | `agent/agents/coordinator_agent.py` | Evidence-based LLM synthesis over pre-gathered deterministic evidence |
+| Specialist agent tools | `agent/agents/flood_assessment_agent.py`, `accessibility_agent.py`, `supply_matching_agent.py` | Strands `@tool` specialists invoked by the coordinator agent |
+| Bounded need/offer judgment | `agent/reasoning/need_offer_judgment.py` | 2-second-timeout advisory interpretation of deterministic match facts, with ungrounded-number rejection |
+| Deterministic `@tool` functions | `agent/tools/flood_tool.py`, `exposure_tool.py`, `accessibility_tool.py`, `allocation_tool.py`, `road_status_tool.py`, `region_scan_tool.py` | Deterministic operations exposed in Strands tool format |
 
-### API Endpoints
+Model provider: `strands.models.ollama.OllamaModel` configured in `agent/config.py` (local Ollama, isolated so it can be swapped for another provider in one file).
 
-```
-GET  /api/locations                    → known locations list
-GET  /api/assess?location=<name>       → full assessment (named)
-GET  /api/assess?lat=<lat>&lon=<lon>   → full assessment (coordinates)
-GET  /api/flood-geojson                → flood polygon data for map
-POST /api/query                        → free-text query → parsed + assessed
-POST /api/field-intelligence           → raw text → extracted structured fields
-GET  /api/field-intelligence/history   → all field reports
-POST /api/override                     → create manual status override
-GET  /api/override/status              → check override for target
-GET  /api/overrides                    → all active overrides
-POST /api/community-reports            → submit community report
-GET  /api/community-reports            → list community reports
-GET  /api/route                        → OSRM route between two points
-GET  /api/route/multiple               → multiple route variants
-POST /api/route/for-allocation         → route-aware allocation
-```
+ReliefOS's deterministic event-driven operational runtime — agent contracts (`AgentFinding`, provenance, severity), `AgentEvent`, deterministic event routing, the transactional outbox, persistence, privacy boundaries, human-in-the-loop gates, and the Network/NGO main-agent orchestration — is **custom application architecture**, built around Strands rather than on top of it.
 
-## Data Sources
+> Strands provides the bounded reasoning layer inside a deterministic, event-driven operational agent architecture.
 
-| Source | File/Service | Status | Usage |
-|---|---|---|---|
-| Sentinel-1 flood polygons | `data/sivasagar_flood.geojson`, `data/raw/floods/` | Static, local | Flood detection |
-| Overpass API (buildings, roads, medical) | Live + `data/cache/` | Cache-first | Infrastructure data |
-| OSRM routing | Local Docker (`localhost:5000`) | Live, local | Route geometry |
-| Ollama (llama3.2) | `localhost:11434` | Live, local | Query parsing, field extraction |
-| Regional OSM PBF | `data/raw/osm/north-eastern-zone-latest.osm.pbf` | External source, not in Git | OSRM routing, infrastructure |
-| Manual overrides | `data/overrides.json` | JSON file | Operational status overrides |
+## Human-in-the-Loop
 
-**NOT yet integrated:** Google Flood Forecasting, CWC/India-WRIS, NASA, Earth Engine, WorldPop, GADM, KoboToolbox (webhook exists but separate app).
+Agents can detect, calculate, rank, summarize, interpret, explain, recommend, and **propose**. Consequential actions — publishing a resource offer, confirming a need/offer match, creating or changing an operation, applying an override — require explicit human approval through the API, and approvals are recorded in the audit log. There is no code path in which an agent autonomously publishes, commits, or mutates shared operational state.
 
-## External Service Integrations
+## Privacy / Multi-Organization Model
 
-| Service | Status |
+- The **network** sees shared/public operational state: needs, published offers, operations, organizations, field reports, overrides.
+- **Organizations** retain private state: resources, teams, missions. The Network Main Agent structurally cannot read it.
+- Coordination proposals carry a public view (`get_public_view`) that excludes private evaluation factors; only fields explicitly approved for publication are converted into a public offer (`agent/coordination/publication.py`).
+- Organization-scoped endpoints resolve the organization server-side per request (`agent/org_context.py`); client-supplied organization IDs are not trusted.
+
+## Event-Driven Runtime
+
+- **Transactional outbox:** `AgentEvent` records are persisted (PostgreSQL) with a full lifecycle (`PENDING → CLAIMED → PROCESSING → PROCESSED / FAILED / SKIPPED_DUPLICATE`), retry counts, and error payloads.
+- **Deterministic routing:** a static routing table maps event types to the specialist domains that should process them — no LLM in the control loop.
+- **Idempotency:** duplicate events are detected and skipped; replays are supported for observability (`POST /api/agent/events/<event_id>/replay`).
+- **Stale recovery:** events stuck in CLAIMED/PROCESSING are requeued (or failed after retry exhaustion) by a background recovery loop.
+- **Failure isolation:** a failing specialist produces an explicit data-gap finding; it never crashes the pipeline or fabricates a result.
+
+## Proactive Intelligence
+
+The proactive runtime (`agent/proactive/runtime.py`) periodically scans operational state with deterministic detectors, deduplicates advisory notifications, and reconciles finding lifecycles (`NEW → ACTIVE → RESOLVED`):
+
+| Detector | Purpose |
 |---|---|
-| **Ollama** | ✅ Implemented and used (query parsing, field intelligence, LLM synthesis) |
-| **Strands SDK** | ✅ Implemented and used (agent framework) |
-| **OSRM** | ✅ Implemented and used (local Docker, flood-aware routing) |
-| **Overpass API** | ✅ Implemented and used (buildings, roads, medical facilities) |
-| **Flask** | ✅ Implemented and used (API backend, port 5001) |
-| **KoboToolbox** | ⚠️ Webhook receiver exists (`kobo_webhook_receiver.py`) but runs as separate Flask app on port 5000 |
-| **Cloudflare Tunnel** | ⚠️ `cloudflared.exe.exe` in repo root — only needed for live Kobo webhook testing |
-| **AWS Bedrock** | ❌ Not yet migrated (planned for future phase) |
-| **PostgreSQL/PostGIS** | ✅ Implemented (Phase 5A, requires DATABASE_URL env var) |
-| **Earth Engine** | ❌ Not integrated (source of flood GeoJSON export) |
+| `coordination_gap` | Needs with no responder beyond an age threshold; duplicate responses |
+| `access_risk` | Road/bridge overrides affecting access |
+| `exposure_risk` | Populations/buildings inside or near flood extents |
+| `medical_gap` | Medical accessibility gaps |
+| `logistics_gap` | Unmatched resource needs vs published offers |
+| `field_conflict` | Contradictory field reports about the same target |
 
-## Phase History
+All findings are advisory: they carry evidence, uncertainty, data gaps, and a review target for a human.
 
-### Phase 1 — Multi-Agent Architecture (Complete)
-- Monolithic → multi-agent Strands architecture
-- Deterministic tool pipeline: flood → exposure → accessibility → PDC → allocation
-- LLM synthesis via coordinator agent
-- 20 tests
+## Geospatial Operational Layer
 
-### Phase 2 — Flood-Aware Routing + Community Reports + Frontend (Complete)
-- OSRM routing with `overview=full` geometry
-- Flood-route intersection detection (Shapely)
-- Community report storage and retrieval
-- Local override system
-- Field intelligence extraction (LLM)
-- Free-text query parsing (LLM)
-- React/Vite/Tailwind frontend with Leaflet map
-- Flask API backend
-- KoboToolbox webhook receiver
-- Route geometry regression test (`overview=full` verification)
-- Grew to 114 tests
+Operational state persists in **PostgreSQL 16 + PostGIS 3.4** (15 tables: districts, settlements, flood_snapshots, field_reports, overrides, buildings, medical_facilities, roads, organizations, needs, resource_offers, operations, operation_participants, activity_events, notifications — plus agent_events, coordination_proposals, users, organization_memberships, audit_logs). Spatial filtering (point-in-polygon, intersects, radius) executes database-side via GiST-indexed geometries (SQLAlchemy Core + GeoAlchemy2). A repository abstraction falls back to in-memory storage for development and tests; production startup refuses to run without a durable PostgreSQL `DATABASE_URL`.
 
-### Phase 3 — Generalized Data Foundation (Complete)
-- Generalized data models (District, Settlement, FloodSnapshot, Building, etc.)
-- Abstract DataRepository interface + InMemoryRepository
-- Data migration layer (import from JSON/GeoJSON)
-- Multi-district test fixtures
-- Provenance model (REAL / DERIVED / SYNTHETIC / MANUAL_OVERRIDE)
-- 182 tests passing
+## Data / Case Study
 
-### Phase 4 — Rewire Runtime to Generalized Layer (Complete)
-- Tools read data through DataRepository abstraction
-- Repository-aware data loading functions
-- Flood, exposure, accessibility tools use repository
-- District-independent assessment code
-- Sivasagar regression preserved
+Current validation uses **Assam flood data** (Sentinel-1 SAR-derived flood polygons for Sivasagar, Jorhat, Charaideo, Golaghat — July 2026) plus OpenStreetMap infrastructure (ODbL — see attribution in data caches), served through a repository layer that is district-agnostic: no district-specific branching exists in the runtime, and generalization is enforced by tests. Google Earth Engine export scripts (`agent/gee/`) document how flood snapshots were produced.
 
-### Phase 5A — PostgreSQL + PostGIS Production Data Layer (Complete)
-- PostgreSQL + PostGIS via SQLAlchemy Core + GeoAlchemy2
-- Full PostgresRepository implementing DataRepository interface
-- Database schema: districts, settlements, flood_snapshots, field_reports, overrides, buildings, medical_facilities, roads
-- Spatial indexes (GiST) on all geometry columns
-- Database-side spatial filtering (point-in-polygon, intersects, within radius)
-- Temporal flood snapshot queries
-- Repository factory: auto-selects based on DATABASE_URL env var
-- Docker Compose for local PostgreSQL + PostGIS
-- DB initialization script + data migration
-- 24 PostgreSQL integration tests
-- Generalization acceptance test
-- Legacy fallback preserved (InMemoryRepository when no DB)
-- Must preserve all Phase 1-4 behavior
+- **Current validation:** Assam flood / geospatial operational data
+- **Architecture:** generalized disaster-response orchestration
+- **Future:** live multi-source disaster ingestion adapters (not implemented)
 
-## Key Constraints
+## Security
 
-1. **Generalization is mandatory.** No district-specific if/else, no hardcoded scenario IDs, no prewritten answers for known incidents.
-2. **Don't break existing behavior.** `python agent/main.py`, `python -m agent.api`, all 114 tests must keep passing.
-3. **Deterministic path must work without LLM.** Assessment, PDC, allocation run without Ollama.
-4. **Don't overbuild.** Phase 3 establishes schemas and access layers — not full multi-district ingestion, not cloud deployment, not voice/WhatsApp.
-5. **Don't redesign PDC/ranking/allocation.** Only generalize their input data sources over time.
-6. **Don't require live services for tests.** Overpass, Ollama, OSRM, internet — none required for unit tests.
+- **Authentication:** session-based auth with HMAC-SHA256-signed tokens (`/api/auth/*`); fail-closed enforcement in production (`AUTH_ENFORCED=true`).
+- **Authorization:** organization-scoped access control with server-side org resolution; production configuration validation fails fast on insecure settings (`agent/config.py` → `validate_production_readiness`).
+- **Privacy boundaries:** public-view projections for all network-facing routes (see above).
+- **Audit logging:** immutable audit records for consequential mutations and approvals (`agent/audit/`).
+- **Observability:** request correlation IDs (`X-Request-ID`), latency measurement, structured access logs (`agent/middleware/observability.py`).
+- **Security headers & error masking:** defensive HTTP headers and generic production errors (`agent/middleware/security.py`); secrets are never logged.
 
-## Known Technical Debt
+## Running Locally
 
-1. Kobo webhook receiver is a separate Flask app (port 5000) — should be integrated into main API
-2. `allocation_agent_tool` and `coordinator_agent_tool` defined but unused by any runtime path
-3. Road status tool exists but is not accessible from the deterministic runtime
-4. `allocate_resources()` returns a formatted string, not structured data
-5. All data storage is JSON files — no database
-6. Flood GeoJSON is static — no update mechanism
-7. No authentication or rate limiting on any API endpoint
-8. `cloudflared.exe.exe` binary in repo root
-
-## Important Files (Top 20)
-
-| # | File | Why it matters |
-|---|---|---|
-| 1 | `agent/assessment.py` | Core orchestrator — `run_relief_assessment()` |
-| 2 | `agent/api.py` | Flask API — all backend endpoints |
-| 3 | `agent/config.py` | Model config, known locations, Overpass config |
-| 4 | `agent/data_loader.py` | Flood data loading, haversine, cache management |
-| 5 | `agent/tools/flood_tool.py` | Flood detection against GeoJSON polygons |
-| 6 | `agent/tools/exposure_tool.py` | Building exposure within flood zones |
-| 7 | `agent/tools/accessibility_tool.py` | Medical facility proximity scoring |
-| 8 | `agent/tools/allocation_tool.py` | PDC, ranking, greedy allocation |
-| 9 | `agent/tools/routing_tool.py` | OSRM routing + flood intersection detection |
-| 10 | `agent/tools/query_parser_tool.py` | LLM query parsing |
-| 11 | `agent/tools/field_intelligence_tool.py` | LLM field observation extraction |
-| 12 | `agent/agents/coordinator_agent.py` | Top-level LLM orchestration |
-| 13 | `agent/community_reports.py` | Community report storage |
-| 14 | `agent/overrides.py` | Manual status override system |
-| 15 | `agent/verification.py` | LLM extraction guardrails |
-| 16 | `data/sivasagar_flood.geojson` | Sentinel-1 flood polygons (sole flood data) |
-| 17 | `tests/test_routing.py` | OSRM routing + overview=full regression test |
-| 18 | `frontend/src/App.jsx` | Main React app |
-| 19 | `frontend/src/components/SituationMap.jsx` | Leaflet flood map |
-| 20 | `requirements.txt` | Runtime dependencies |
-
-## Running Tests
+Prerequisites: Python 3.11+, Docker (for PostgreSQL), Node.js (for the frontend). Ollama is **optional** — needed only for LLM features (query parsing, field intelligence extraction, LLM synthesis); the deterministic path runs without it.
 
 ```bash
-# Full suite (182 tests, no external services required)
-python -m pytest -v
+# 1. Install backend dependencies
+pip install -r requirements.txt
 
-# Specific areas
-python -m pytest tests/test_routing.py -v        # routing + flood intersection
-python -m pytest tests/test_priority.py -v       # PDC scoring
-python -m pytest tests/test_allocation.py -v     # resource allocation
-python -m pytest tests/test_assessment.py -v     # assessment orchestration
-python -m pytest tests/test_flood_tool.py -v     # flood detection
-python -m pytest tests/test_community_reports.py -v  # community reports
-python -m pytest tests/test_verification.py -v   # LLM guardrails
-python -m pytest tests/test_phase3.py -v         # generalized data foundation
-python -m pytest tests/test_phase4.py -v         # runtime rewired to repository
+# 2. Start PostgreSQL + PostGIS and run the API (Windows)
+start_backend.bat
+#    …or manually:
+docker compose up -d
+export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos
+python scripts/db_init.py        # creates schema + imports district/flood/field data
+python -m agent.api              # Flask API on http://localhost:5001
+```
+
+```bash
+# 3. Frontend (separate terminal)
+cd frontend
+npm install
+npm run dev                      # http://localhost:3000 (proxies /api to :5001)
+```
+
+Optional services:
+
+```bash
+ollama serve                     # LLM features (llama3.2) — optional
+cd osrm && ./setup.sh            # local OSRM routing server — optional (haversine fallback used otherwise)
+python kobo_webhook_receiver.py  # KoboToolbox webhook receiver (port 5000) — optional
+```
+
+Production-like startup (validates config, requires durable PostgreSQL, starts the outbox worker + proactive scheduler): `python -m agent.prod_startup`. See `.env.example` for all environment variables and `BACKUP_AND_RECOVERY.md` for backup/restore procedures.
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| API | http://localhost:5001 |
+| PostgreSQL + PostGIS | localhost:5433 |
+| Ollama (optional) | http://localhost:11434 |
+
+## Testing
+
+```bash
+# Full backend suite (in-memory mode — no services required)
+RELIEFOS_MEMORY=1 python -m pytest tests/ -v
 
 # PostgreSQL integration tests (requires DATABASE_URL)
 export DATABASE_URL=postgresql://reliefos:reliefos@localhost:5433/reliefos
-pytest tests/test_postgres_repository.py -v
+python -m pytest tests/ -v
+
+# Frontend
+cd frontend && npm test
 ```
+
+Verified results:
+
+```text
+Backend (PostgreSQL):  736 passed / 0 skipped / 0 failed
+Backend (memory mode): 692 passed / 20 skipped / 0 failed   (skips are DB-required tests)
+Frontend:               47 passed / 0 failed
+```
+
+## Project Structure
+
+```text
+agent/                    Backend: API, agents, tools, data layer, runtime
+  agents/                 Network/NGO main agents, workers, events, event router
+  tools/                  Deterministic tools + Strands LLM extraction tools
+  data/                   Models, repository abstraction, PostgreSQL repository, schema
+  coordination/           Proposal lifecycle, publication, candidate selection
+  proactive/              Proactive runtime, scheduler, deterministic detectors
+  reasoning/              Bounded LLM judgment with verification guardrails
+  auth/ audit/ middleware/  Security, audit logging, observability
+  gee/                    Google Earth Engine flood export pipeline (case-study data)
+frontend/                 React 19 + Vite + Tailwind + Leaflet workspace UI
+  src/components/workspace/  Map-first console: map canvas, layer rail, context panel, activity bar
+tests/                    38 backend test modules + frontend unit tests (frontend/src/__tests__)
+scripts/                  DB init, ingestion, seeding, backup verification
+docs/                     Architecture, audits, phase documentation
+osrm/                     Local OSRM routing server setup
+data/                     Flood GeoJSON, caches, org fixtures, migration sources
+```
+
+## Configuration
+
+Copy `.env.example` to `.env` and set values. Key variables (all documented with production requirements in `.env.example`):
+
+| Variable | Purpose |
+|---|---|
+| `ENVIRONMENT` | `development` \| `production` — gates fail-closed behavior |
+| `DATABASE_URL` | PostgreSQL + PostGIS connection string (required in production) |
+| `RELIEFOS_SECRET_KEY` | Session-token signing secret (≥32 random chars, required in production) |
+| `AUTH_ENFORCED` | `true` rejects unauthenticated requests (required in production) |
+| `CORS_ALLOWED_ORIGINS` | Trusted frontend origins |
+| `EVENT_WORKER_*` | Outbox worker: enable, poll interval, batch size |
+| `PROACTIVE_*` | Proactive scheduler: enable, scan interval |
+| `HOST`, `PORT`, `LOG_LEVEL` | Server binding and logging |
+
+Never commit real `.env` values. No secrets or credentials are stored in this repository.
+
+## Open Source License
+
+This project is licensed under the **Apache License 2.0** — see [LICENSE](LICENSE).
+
+Third-party data and services used: OpenStreetMap data (ODbL attribution retained in data caches), Sentinel-1-derived flood polygons (case-study data), Overpass API, OSRM, Ollama, Strands Agents, Flask, SQLAlchemy/GeoAlchemy2. See `.env.example` and `docs/` for integration details.
+
+## Roadmap
+
+Future work (not implemented in this repository):
+
+- Live multi-source disaster ingestion adapters
+- Additional disaster types beyond flooding
+- AWS deployment (ECR/ECS/Fargate, RDS for PostgreSQL/PostGIS, Secrets Manager)
+- Production-scale runtime hardening and stronger distributed scheduling
+- Additional operational integrations (real-time field confirmation, live river gauges)
+
+## Hackathon / Demo
+
+The submission demo walks the end-to-end workflow: create a need from field data → the Network Main Agent analyzes it and detects a coordination gap → a coordination proposal is sent to an organization → the NGO Main Agent evaluates it against private inventory/teams → a human approves publication → the public offer and operation appear on the shared map — all with evidence, provenance, and auditability visible at each step. Bounded Strands reasoning is demonstrated through free-text query parsing and field-intelligence extraction.

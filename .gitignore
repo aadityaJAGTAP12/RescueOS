@@ -12,9 +12,13 @@ data/raw/osm/north-eastern-zone-latest.osm.pbf
 cloudflared.exe.exe
 
 # Frontend
+node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 
 # Point-in-time debugging artifacts (regression verification session)
 map-after-fix.png
+
+# Generated runtime / debug artifacts
+*.log
